@@ -1,0 +1,285 @@
+/**
+ * RegimeGate.jsx
+ * --------------
+ * Fetches /api/regime/gate and renders:
+ *   - A persistent banner at the top of any page that uses it
+ *   - A hard block screen when gate === "DANGER"
+ *   - Optional: exposes gate data via onGate callback for parent logic
+ *
+ * Usage:
+ *   <RegimeGate onGate={setRegimeData} />
+ *   -- or standalone blocking --
+ *   <RegimeGate blockRender={<YourContent />} />
+ */
+
+import { useState, useEffect } from "react";
+
+const API = process.env.REACT_APP_API_URL || "https://market-dashboard-production-db0b.up.railway.app";
+
+const GATE_COLORS = {
+  GO:      { bg: "rgba(74,222,128,0.08)",  border: "#4ade8030", text: "#4ade80", label: "GO"      },
+  CAUTION: { bg: "rgba(251,191,36,0.08)",  border: "#fbbf2430", text: "#fbbf24", label: "CAUTION" },
+  WARN:    { bg: "rgba(240,165,0,0.1)",    border: "#f0a50040", text: "#f0a500", label: "WARN"    },
+  DANGER:  { bg: "rgba(224,82,82,0.1)",    border: "#e0525250", text: "#e05252", label: "DANGER"   },
+};
+
+const SCORE_DESC = {
+  GO:      "Confirmed uptrend — full playbook active",
+  CAUTION: "Neutral market — standard setups, normal size",
+  WARN:    "Market under pressure — 50% size, avoid micro caps",
+  DANGER:  "Market in correction — extreme caution, stand aside or min size",
+};
+
+function ScoreArc({ score }) {
+  // Simple horizontal gauge 0-100
+  const col = score >= 65 ? "#4ade80" : score >= 50 ? "#fbbf24" : score >= 35 ? "#f0a500" : "#e05252";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ width: 120, height: 6, background: "#1a2a1a", borderRadius: 3, position: "relative" }}>
+        <div style={{
+          position: "absolute", left: 0, top: 0, bottom: 0,
+          width: `${score}%`, borderRadius: 3,
+          background: `linear-gradient(90deg, #e05252, #f0a500, #fbbf24, ${col})`,
+          transition: "width 0.6s ease",
+        }} />
+        {/* Threshold markers */}
+        {[35, 50, 65].map(t => (
+          <div key={t} style={{
+            position: "absolute", top: -2, bottom: -2,
+            left: `${t}%`, width: 1,
+            background: "rgba(255,255,255,0.3)",
+          }} />
+        ))}
+      </div>
+      <span style={{ fontSize: 13, fontWeight: 700, color: col }}>{score}</span>
+    </div>
+  );
+}
+
+function VixPill({ vix, vixLabel }) {
+  if (!vix) return null;
+  const col = vix > 35 ? "#e05252" : vix > 25 ? "#f0a500" : vix > 20 ? "#fbbf24" : "#4ade80";
+  return (
+    <span style={{
+      fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
+      background: `${col}18`, color: col, border: `1px solid ${col}30`,
+      letterSpacing: 0.5,
+    }}>
+      VIX {vix?.toFixed(1)} — {vixLabel || ""}
+    </span>
+  );
+}
+
+function BreadthPill({ breadth }) {
+  if (breadth == null) return null;
+  const col = breadth > 70 ? "#4ade80" : breadth > 50 ? "#fbbf24" : "#e05252";
+  return (
+    <span style={{
+      fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
+      background: `${col}18`, color: col, border: `1px solid ${col}30`,
+      letterSpacing: 0.5,
+    }}>
+      BREADTH {breadth?.toFixed(0)}% above 50MA
+    </span>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
+
+export default function RegimeGate({ onGate, blockRender, compact = false }) {
+  const [data,    setData]    = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API}/api/regime/gate`)
+      .then(r => r.json())
+      .then(d => { setData(d); onGate && onGate(d); })
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return (
+    <div style={{ padding: "8px 16px", fontSize: 10, color: "#555", letterSpacing: 1 }}>
+      LOADING REGIME...
+    </div>
+  );
+
+  if (!data) return null;
+
+  const { gate, gate_color, gate_msg, score, vix, vix_label, vix_warning,
+          breadth_50ma_pct, size_multiplier, indices } = data;
+
+  const C = GATE_COLORS[gate] || GATE_COLORS.CAUTION;
+
+  // ── DANGER screen (soft warning, not a hard block) ──
+  if (gate === "DANGER" && blockRender) {
+    return (
+      <div>
+        <div style={{
+          background: C.bg, border: `1px solid ${C.border}`,
+          borderRadius: 6, padding: "20px 24px", marginBottom: 16,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+            <span style={{ fontSize: 18 }}>🚫</span>
+            <div>
+              <div style={{ fontWeight: 700, color: C.text, fontSize: 13, letterSpacing: 1 }}>
+                REGIME DANGER — MARKET IN CORRECTION
+              </div>
+              <div style={{ fontSize: 11, color: "#ccc", marginTop: 2 }}>
+                Score {score}/100 — New long suggestions are disabled.
+              </div>
+            </div>
+            <ScoreArc score={score} />
+          </div>
+          <div style={{ fontSize: 11, color: "#aaa", marginBottom: 10 }}>{gate_msg}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <VixPill vix={vix} vixLabel={vix_label} />
+            <BreadthPill breadth={breadth_50ma_pct} />
+          </div>
+          {vix_warning && (
+            <div style={{ fontSize: 10, color: "#f0a500", marginTop: 8, fontStyle: "italic" }}>
+              ⚠ {vix_warning}
+            </div>
+          )}
+          <div style={{ marginTop: 12, fontSize: 10, color: "#888" }}>
+            Gate opens when regime score exceeds 35. Check again after next scan (21:00 UTC).
+          </div>
+        </div>
+        <div style={{ opacity: 0.35, pointerEvents: "none", userSelect: "none" }}>
+          {blockRender}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Compact banner (for main dashboard / micro caps) ──
+  if (compact) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+        padding: "6px 10px", borderRadius: 4,
+        background: C.bg, border: `1px solid ${C.border}`,
+        marginBottom: 10,
+      }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: C.text, letterSpacing: 1 }}>
+          REGIME {C.label}
+        </span>
+        <ScoreArc score={score} />
+        <VixPill vix={vix} vixLabel={vix_label} />
+        <BreadthPill breadth={breadth_50ma_pct} />
+        {size_multiplier < 1 && (
+          <span style={{ fontSize: 9, color: "#f0a500", fontWeight: 600 }}>
+            SIZE ×{size_multiplier}
+          </span>
+        )}
+        <span style={{ fontSize: 10, color: "#888", flex: 1 }}>{SCORE_DESC[gate]}</span>
+      </div>
+    );
+  }
+
+  // ── Full banner with expandable detail (for Suggested Trades) ──
+  return (
+    <div style={{
+      background: C.bg, border: `1px solid ${C.border}`,
+      borderRadius: 6, padding: "12px 16px", marginBottom: 14,
+    }}>
+      {/* Header row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: C.text, letterSpacing: 1,
+          padding: "2px 8px", borderRadius: 2,
+          background: `${gate_color}18`, border: `1px solid ${gate_color}30`,
+        }}>
+          REGIME {C.label}
+        </span>
+        <ScoreArc score={score} />
+        <VixPill vix={vix} vixLabel={vix_label} />
+        <BreadthPill breadth={breadth_50ma_pct} />
+        {size_multiplier < 1 && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#f0a500" }}>
+            SUGGESTED SIZE ×{size_multiplier}
+          </span>
+        )}
+        <button
+          onClick={() => setExpanded(e => !e)}
+          style={{
+            marginLeft: "auto", fontSize: 9, color: "#555", background: "none",
+            border: "none", cursor: "pointer", letterSpacing: 0.5,
+          }}>
+          {expanded ? "▲ LESS" : "▼ MORE"}
+        </button>
+      </div>
+
+      {/* Gate message */}
+      <div style={{ fontSize: 11, color: "#bbb", marginTop: 8 }}>{gate_msg}</div>
+      {vix_warning && (
+        <div style={{ fontSize: 10, color: "#f0a500", marginTop: 4, fontStyle: "italic" }}>
+          ⚠ {vix_warning}
+        </div>
+      )}
+
+      {/* Expanded: thresholds + index detail */}
+      {expanded && (
+        <div style={{ marginTop: 12 }}>
+          {/* Threshold legend */}
+          <div style={{
+            display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 12,
+          }}>
+            {[
+              { gate: "DANGER",   range: "< 35",  desc: "No longs" },
+              { gate: "WARN",    range: "35–49", desc: "Size ×0.5" },
+              { gate: "CAUTION", range: "50–64", desc: "Size ×0.75" },
+              { gate: "GO",      range: "≥ 65",  desc: "Full size" },
+            ].map(t => {
+              const tc = GATE_COLORS[t.gate];
+              const active = t.gate === gate;
+              return (
+                <div key={t.gate} style={{
+                  padding: "6px 8px", borderRadius: 3,
+                  background: active ? `${tc.text}18` : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${active ? tc.text + "40" : "#333"}`,
+                }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: tc.text }}>{t.gate}</div>
+                  <div style={{ fontSize: 10, color: "#aaa" }}>{t.range}</div>
+                  <div style={{ fontSize: 9, color: "#666" }}>{t.desc}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Index status */}
+          {indices && Object.keys(indices).length > 0 && (
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "#555", letterSpacing: 1, marginBottom: 6 }}>
+                INDEX HEALTH
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
+                {Object.entries(indices).map(([ticker, d]) => (
+                  <div key={ticker} style={{
+                    padding: "5px 7px", borderRadius: 3,
+                    background: d.above_ma200 ? "rgba(74,222,128,0.06)" : "rgba(224,82,82,0.06)",
+                    border: `1px solid ${d.above_ma200 ? "#4ade8025" : "#e0525225"}`,
+                  }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: d.above_ma200 ? "#4ade80" : "#e05252" }}>
+                      {ticker}
+                    </div>
+                    <div style={{ fontSize: 9, color: "#888" }}>
+                      {d.above_ma200 ? "Above" : "Below"} MA200
+                    </div>
+                    <div style={{ fontSize: 9, color: d.dist_from_200ma >= 0 ? "#4ade80" : "#e05252" }}>
+                      {d.dist_from_200ma >= 0 ? "+" : ""}{d.dist_from_200ma?.toFixed(1)}%
+                    </div>
+                    <div style={{ fontSize: 9, color: d.chg_1m >= 0 ? "#4ade80" : "#e05252" }}>
+                      1M: {d.chg_1m >= 0 ? "+" : ""}{d.chg_1m?.toFixed(1)}%
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

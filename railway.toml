@@ -1,0 +1,11 @@
+# railway.toml
+# Tells Railway how to build and run each service.
+# You will create TWO services in Railway — one for backend, one for frontend.
+# This file is for reference — Railway also auto-detects most settings.
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
