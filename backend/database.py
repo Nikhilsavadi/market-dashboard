@@ -206,6 +206,28 @@ def init_db():
                 tickers_json TEXT NOT NULL,
                 created_at  TEXT DEFAULT (datetime('now'))
             );
+
+            -- Bot trades (DAX ASRS + FTSE 1BN/1BP pushed from VPS)
+            CREATE TABLE IF NOT EXISTS bot_trades (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot          TEXT NOT NULL,          -- 'DAX' or 'FTSE'
+                date         TEXT NOT NULL,
+                trade_num    INTEGER DEFAULT 1,
+                direction    TEXT,                   -- 'LONG' or 'SHORT'
+                entry        REAL,
+                exit         REAL,
+                pnl_pts      REAL,
+                mfe          REAL,
+                bar_type     TEXT,                   -- FTSE: '1BN','1BP'; DAX: null
+                bar_width    REAL,
+                stake        REAL,
+                stop_phase   TEXT,
+                exit_reason  TEXT,
+                extra_json   TEXT,                   -- any additional fields
+                created_at   TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_bot_trades_bot  ON bot_trades(bot);
+            CREATE INDEX IF NOT EXISTS idx_bot_trades_date ON bot_trades(date);
         """)
 
         # Safe column additions for existing DBs (ALTER TABLE IF NOT EXISTS not supported in old SQLite)
@@ -937,3 +959,127 @@ def get_watchlist_exports(limit: int = 14) -> list[dict]:
             del d["tickers_json"]
             result.append(d)
         return result
+
+
+# ── Bot trades (DAX / FTSE) ──────────────────────────────────────────────────
+
+def bot_trades_sync(bot: str, trades: list[dict]):
+    """Replace all trades for a bot with the new list (full sync)."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM bot_trades WHERE bot = ?", (bot,))
+        for t in trades:
+            extra = {k: v for k, v in t.items()
+                     if k not in ("bot", "date", "trade_num", "direction", "entry",
+                                  "exit", "pnl_pts", "mfe", "bar_type", "bar_width",
+                                  "stake", "stop_phase", "exit_reason")}
+            conn.execute("""
+                INSERT INTO bot_trades (bot, date, trade_num, direction, entry, exit,
+                    pnl_pts, mfe, bar_type, bar_width, stake, stop_phase, exit_reason, extra_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                bot,
+                t.get("date", ""),
+                t.get("trade_num", 1),
+                t.get("direction", ""),
+                t.get("entry"),
+                t.get("exit"),
+                t.get("pnl_pts"),
+                t.get("mfe"),
+                t.get("bar_type"),
+                t.get("bar_width"),
+                t.get("stake"),
+                t.get("stop_phase"),
+                t.get("exit_reason"),
+                json.dumps(extra) if extra else None,
+            ))
+
+
+def bot_trades_list(bot: str = None) -> list[dict]:
+    """Get all bot trades, optionally filtered by bot name."""
+    with get_conn() as conn:
+        if bot:
+            rows = conn.execute(
+                "SELECT * FROM bot_trades WHERE bot = ? ORDER BY date, trade_num", (bot,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM bot_trades ORDER BY bot, date, trade_num"
+            ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("extra_json"):
+                d["extra"] = json.loads(d["extra_json"])
+            d.pop("extra_json", None)
+            result.append(d)
+        return result
+
+
+def bot_trades_stats(bot: str) -> dict:
+    """Compute summary stats for a bot."""
+    trades = bot_trades_list(bot)
+    if not trades:
+        return {"bot": bot, "total_trades": 0}
+
+    pnls = [t["pnl_pts"] or 0 for t in trades]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    total_pnl = round(sum(pnls), 1)
+
+    # Equity curve
+    equity = []
+    running = 0
+    peak = 0
+    max_dd = 0
+    for t in trades:
+        running += (t["pnl_pts"] or 0)
+        running = round(running, 1)
+        peak = max(peak, running)
+        dd = round(peak - running, 1)
+        max_dd = max(max_dd, dd)
+        equity.append({"date": t["date"], "equity": running, "drawdown": dd})
+
+    # Daily P&L
+    daily = {}
+    for t in trades:
+        d = t["date"]
+        daily[d] = round(daily.get(d, 0) + (t["pnl_pts"] or 0), 1)
+
+    # Monthly P&L
+    monthly = {}
+    for t in trades:
+        m = t["date"][:7]
+        monthly[m] = round(monthly.get(m, 0) + (t["pnl_pts"] or 0), 1)
+
+    # Streaks
+    daily_results = list(daily.values())
+    win_streak = lose_streak = cur_w = cur_l = 0
+    for d in daily_results:
+        if d > 0:
+            cur_w += 1; cur_l = 0
+            win_streak = max(win_streak, cur_w)
+        elif d < 0:
+            cur_l += 1; cur_w = 0
+            lose_streak = max(lose_streak, cur_l)
+        else:
+            cur_w = cur_l = 0
+
+    return {
+        "bot": bot,
+        "total_trades": len(trades),
+        "total_pnl": total_pnl,
+        "win_rate": round(len(wins) / len(pnls) * 100, 1) if pnls else 0,
+        "avg_win": round(sum(wins) / len(wins), 1) if wins else 0,
+        "avg_loss": round(sum(losses) / len(losses), 1) if losses else 0,
+        "best_trade": round(max(pnls), 1) if pnls else 0,
+        "worst_trade": round(min(pnls), 1) if pnls else 0,
+        "max_drawdown": round(max_dd, 1),
+        "win_streak": win_streak,
+        "lose_streak": lose_streak,
+        "trading_days": len(daily),
+        "avg_mfe": round(sum(t["mfe"] or 0 for t in trades) / len(trades), 1) if trades else 0,
+        "equity_curve": equity,
+        "daily_pnl": daily,
+        "monthly_pnl": monthly,
+        "trades": trades,
+    }

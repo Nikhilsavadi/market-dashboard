@@ -14,14 +14,15 @@ from typing import Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from database import (
     init_db, journal_add, journal_list, journal_update,
-    journal_delete, journal_get, get_backtest_results, get_signal_history
+    journal_delete, journal_get, get_backtest_results, get_signal_history,
+    bot_trades_sync, bot_trades_list, bot_trades_stats,
 )
 from settings import get_settings, update_settings, calculate_portfolio_heat
 
@@ -3195,3 +3196,39 @@ def get_ep_backtest_trades(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Bot Trades (DAX / FTSE) ─────────────────────────────────────────────────
+
+BOT_SYNC_SECRET = os.environ.get("BOT_SYNC_SECRET", "changeme")
+
+
+@app.post("/api/bot/sync")
+async def bot_sync(request: Request):
+    """Receive full trade list from VPS bot. Body: {secret, bot, trades}."""
+    body = await request.json()
+    if body.get("secret") != BOT_SYNC_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+    bot = body.get("bot")
+    trades = body.get("trades", [])
+    if bot not in ("DAX", "FTSE"):
+        raise HTTPException(status_code=400, detail="bot must be DAX or FTSE")
+    bot_trades_sync(bot, trades)
+    return {"ok": True, "bot": bot, "synced": len(trades)}
+
+
+@app.get("/api/bot/stats")
+def bot_stats(bot: str = None):
+    """Get stats for one or both bots."""
+    if bot:
+        return bot_trades_stats(bot.upper())
+    return {
+        "DAX": bot_trades_stats("DAX"),
+        "FTSE": bot_trades_stats("FTSE"),
+    }
+
+
+@app.get("/api/bot/trades")
+def bot_trades(bot: str = None):
+    """Get all trades, optionally filtered by bot."""
+    return bot_trades_list(bot.upper() if bot else None)

@@ -5,6 +5,7 @@ import Correlation from './components/Correlation';
 import WatchlistTab from './components/WatchlistTab';
 import SectorHeatmap from './components/SectorHeatmap';
 import SectorRotation from './components/SectorRotation';
+import BotDashboard from './components/BotDashboard';
 import React, { useState, useEffect, useCallback } from "react";
 
 
@@ -3588,7 +3589,7 @@ export default function App({ onQuickAdd }) {
       <div style={{ fontSize:10, color:"var(--text3)" }}>Fetching from backend...</div>
     </div>
   );
-  const tabs = ["Market", "EP Dash"];
+  const tabs = ["Market", "EP Dash", "Bots"];
   // Hidden tabs (code preserved): "Focus", "Weekly", "Longs", "EP", "Shorts", "All Stocks", "Pipeline", "Replay", "Correlation", "Watchlist"
 
   return (
@@ -3646,7 +3647,7 @@ export default function App({ onQuickAdd }) {
               className={`tab ${t === tab ? "active" : ""} ${t === "Shorts" ? "tab-short" : ""}`}
               onClick={() => setTab(t)}
             >
-              {t === "Shorts" ? "▼ " : t === "Longs" ? "▲ " : t === "Market" ? "◈ " : t === "Focus" ? "🎯 " : t === "Weekly" ? "📅 " : t === "EP" ? "⚡ " : t === "EP Dash" ? "🔥 " : t === "Replay" ? "⏪ " : t === "Pipeline" ? "◎ " : t === "Correlation" ? "📊 " : t === "Watchlist" ? "📋 " : ""}{t}
+              {t === "Shorts" ? "▼ " : t === "Longs" ? "▲ " : t === "Market" ? "◈ " : t === "Focus" ? "🎯 " : t === "Weekly" ? "📅 " : t === "EP" ? "⚡ " : t === "EP Dash" ? "🔥 " : t === "Replay" ? "⏪ " : t === "Pipeline" ? "◎ " : t === "Correlation" ? "📊 " : t === "Watchlist" ? "📋 " : t === "Bots" ? "⚙ " : ""}{t}
             </div>
           ))}
         </div>
@@ -3665,6 +3666,7 @@ export default function App({ onQuickAdd }) {
           {tab === "Replay" && <Replay />}
           {tab === "Correlation" && <Correlation />}
           {tab === "Watchlist" && <WatchlistTab />}
+          {tab === "Bots" && <BotDashboard />}
         </div>
 
       </div>
