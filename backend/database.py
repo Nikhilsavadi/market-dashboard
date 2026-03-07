@@ -34,7 +34,7 @@ def init_db():
     _old_path = Path(__file__).parent / "dashboard.db"
     if DB_PATH != _old_path and not DB_PATH.exists() and _old_path.exists():
         import shutil
-        print(f"[db] Migrating DB from {_old_path} → {DB_PATH}")
+        print(f"[db] Migrating DB from {_old_path} -> {DB_PATH}")
         shutil.copy2(_old_path, DB_PATH)
         print(f"[db] Migration complete — {DB_PATH.stat().st_size / 1024 / 1024:.1f} MB")
     # ─────────────────────────────────────────────────────────────────────
@@ -509,6 +509,7 @@ def init_backtest_tables():
                 w_above_ema40   INTEGER DEFAULT 0,
                 within_1atr_wema10 INTEGER DEFAULT 0,
                 is_weekly_signal   INTEGER DEFAULT 0,
+                regime_filtered    INTEGER DEFAULT 0,  -- 1 = signal fired in WARN/DANGER, not traded
                 created_at      TEXT DEFAULT (datetime('now'))
             );
 
@@ -527,9 +528,7 @@ def init_backtest_tables():
                 pnl_r           REAL,       -- pnl in R multiples (1R = 1.5x ATR)
                 atr             REAL,
                 stop_price      REAL,
-                t1_price        REAL,
-                t2_price        REAL,
-                t3_price        REAL,
+                trail_exit      INTEGER DEFAULT 0,
                 vcs             REAL,
                 rs              INTEGER,
                 base_score      INTEGER,
@@ -606,6 +605,7 @@ def init_backtest_tables():
             ("w_above_ema40",      "INTEGER DEFAULT 0"),
             ("within_1atr_wema10", "INTEGER DEFAULT 0"),
             ("is_weekly_signal",   "INTEGER DEFAULT 0"),
+            ("regime_filtered",    "INTEGER DEFAULT 0"),
             ("breakout_price",     "REAL"),
             ("base_low",           "REAL"),
         ]:
@@ -630,7 +630,7 @@ def save_historical_signals(signals: list[dict]):
                 vcp_stages, sector, sector_rs_1m, market_score, pct_from_ma21,
                 day_of_week,
                 w_stack_ok, w_ema10, w_ema40, w_ema10_slope, w_above_ema10,
-                w_above_ema40, within_1atr_wema10, is_weekly_signal
+                w_above_ema40, within_1atr_wema10, is_weekly_signal, regime_filtered
             ) VALUES (
                 :signal_date, :ticker, :signal_type, :price, :entry_close, :entry_next_open,
                 :breakout_price, :base_low,
@@ -638,7 +638,8 @@ def save_historical_signals(signals: list[dict]):
                 :vcp_stages, :sector, :sector_rs_1m, :market_score, :pct_from_ma21,
                 :day_of_week,
                 :w_stack_ok, :w_ema10, :w_ema40, :w_ema10_slope, :w_above_ema10,
-                :w_above_ema40, :within_1atr_wema10, :is_weekly_signal
+                :w_above_ema40, :within_1atr_wema10, :is_weekly_signal,
+                COALESCE(:regime_filtered, 0)
             )
         """, signals)
 
@@ -651,13 +652,13 @@ def save_historical_trades(trades: list[dict]):
             INSERT INTO historical_trades (
                 signal_id, signal_date, ticker, signal_type, entry_type, entry_price,
                 exit_price, exit_reason, hold_days, pnl_pct, pnl_r, atr, stop_price,
-                t1_price, t2_price, t3_price, vcs, rs, base_score, sector,
+                trail_exit, vcs, rs, base_score, sector,
                 market_score, is_short, day_of_week,
                 mae_pct, mae_r, mfe_pct, mfe_r, slippage_pct
             ) VALUES (
                 :signal_id, :signal_date, :ticker, :signal_type, :entry_type, :entry_price,
                 :exit_price, :exit_reason, :hold_days, :pnl_pct, :pnl_r, :atr, :stop_price,
-                :t1_price, :t2_price, :t3_price, :vcs, :rs, :base_score, :sector,
+                :trail_exit, :vcs, :rs, :base_score, :sector,
                 :market_score, :is_short, :day_of_week,
                 :mae_pct, :mae_r, :mfe_pct, :mfe_r, :slippage_pct
             )

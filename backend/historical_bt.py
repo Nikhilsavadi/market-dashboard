@@ -34,11 +34,9 @@ from database import (
 DEFAULT_PARAMS = {
     # Daily signal exits
     "stop_atr_mult":    1.5,
-    "t1_atr_mult":      1.5,
-    "t2_atr_mult":      3.0,
-    "t3_atr_mult":      5.0,
-    "max_hold_days":    25,         # extended: VCP/flag setups take 15-25 days
-    "ma21_cross_exit":  True,
+    "max_hold_days":    90,         # trailing MA50 exit — let winners run
+    "ma21_cross_exit":  False,
+    "trail_ma":         "ma50",     # exit trigger: trailing MA50 with 1% buffer
     "entry_types":      ["next_open"],  # realistic only — signal-close is look-ahead
     "slippage":         0.001,      # 0.1% per leg (0.2% round-trip)
     # Weekly signal exits — wider stops, longer rope, bigger targets
@@ -47,6 +45,15 @@ DEFAULT_PARAMS = {
     "w_t2_atr_mult":    6.0,        # let weekly winners run
     "w_t3_atr_mult":   10.0,        # extended target for trend continuation
     "w_max_hold_days":  50,         # weekly trends take 6-10 weeks to play out
+    # Regime gate — signals below this market_score are saved but NOT traded
+    # 48 = NEUTRAL threshold (same as live dashboard gate)
+    # Set to 0 to disable gating and simulate all signals
+    "regime_gate":      55,
+    # Quality gates — signals below these thresholds are skipped entirely (not saved to DB)
+    "min_rs":           85,
+    "min_base_score":   2,
+    "min_vol_ratio":    1.1,
+    "allowed_signal_types": ["MA21", "MA50", "W_EMA10", "RECOVERY"],
 }
 
 MIN_BARS_HISTORY = 20   # need at least 20 bars before starting to scan (MA warmup)
@@ -252,6 +259,12 @@ def _scan_day(
         )
         signals = signals + weekly_signals
 
+    # ── Capitulation recovery scan ─────────────────────────────────────────
+    recovery_signals = _scan_recovery_day(
+        sliced, etf_tickers, signal_date, market_score, next_date, bars_data
+    )
+    signals = signals + recovery_signals
+
     return signals
 
 
@@ -406,6 +419,143 @@ def _scan_weekly_day(
     return weekly_signals
 
 
+# ── Capitulation recovery scanner ──────────────────────────────────────────────
+
+def _scan_recovery_day(
+    sliced: dict,
+    etf_tickers: set,
+    signal_date: str,
+    market_score: int,
+    next_date,
+    bars_data: dict,
+) -> list[dict]:
+    """
+    Detect capitulation recovery signals: stocks that dropped 40%+ from
+    their 60-day high (capitulation), were below both MA21 and MA50,
+    and NOW close back above MA21 for the first time.
+
+    These catch the 10x mover pattern — beaten-down stocks recovering
+    after a market sell-off. Entry is next-open after MA21 reclaim.
+    """
+    from screener import calculate_atr_series
+    from sector_rs import get_sector
+
+    recovery_signals = []
+
+    for ticker, df in sliced.items():
+        if ticker in etf_tickers:
+            continue
+        if len(df) < 80:  # need enough history for 60-day high + MAs
+            continue
+
+        try:
+            closes = df["close"]
+            highs  = df["high"]
+            lows   = df["low"]
+            price  = float(closes.iloc[-1])
+
+            # MA21 and MA50
+            ma21 = float(closes.iloc[-21:].mean()) if len(closes) >= 21 else None
+            ma50 = float(closes.iloc[-50:].mean()) if len(closes) >= 50 else None
+            if ma21 is None or ma50 is None:
+                continue
+
+            # Must be closing ABOVE MA21 today
+            if price <= ma21:
+                continue
+
+            # Yesterday must have been BELOW MA21 (first reclaim)
+            if len(closes) < 22:
+                continue
+            prev_close = float(closes.iloc[-2])
+            prev_ma21  = float(closes.iloc[-22:-1].mean())
+            if prev_close > prev_ma21:
+                continue  # was already above — not a fresh reclaim
+
+            # Must still be below MA50 (early recovery, not already established)
+            if price > ma50:
+                continue
+
+            # Capitulation check: must have dropped 40%+ from 60-day high
+            lookback_60 = highs.iloc[-60:] if len(highs) >= 60 else highs
+            high_60d = float(lookback_60.max())
+            drawdown = (high_60d - price) / high_60d
+            if drawdown < 0.30:  # at least 30% below 60d high
+                continue
+
+            # Volume surge on reclaim day — conviction
+            if "volume" in df.columns and len(df) >= 21:
+                avg_vol = float(df["volume"].iloc[-21:-1].mean())
+                today_vol = float(df["volume"].iloc[-1])
+                vol_ratio = today_vol / avg_vol if avg_vol > 0 else 0
+                if vol_ratio < 1.2:  # need at least 20% above average volume
+                    continue
+            else:
+                vol_ratio = 0
+
+            # ATR for position sizing
+            atr_raw = calculate_atr_series(df)
+            if isinstance(atr_raw, (int, float)):
+                atr = float(atr_raw)
+            elif atr_raw is not None and hasattr(atr_raw, 'iloc') and len(atr_raw) > 0:
+                atr = float(atr_raw.iloc[-1])
+            else:
+                atr = None
+            if not atr or atr <= 0:
+                continue
+
+            # Next open for entry
+            next_open = None
+            if next_date is not None and ticker in bars_data:
+                next_row = bars_data[ticker][bars_data[ticker].index == next_date]
+                if not next_row.empty:
+                    next_open = float(next_row["open"].iloc[0])
+
+            sector = get_sector(ticker)
+
+            recovery_signals.append({
+                "_is_long":    True,
+                "_is_short":   False,
+                "_result":     {},
+                "ticker":      ticker,
+                "signal_date": signal_date,
+                "signal_type": "RECOVERY",
+                "price":       round(price, 4),
+                "entry_close": round(price, 4),
+                "entry_next_open": next_open,
+                "breakout_price": None,
+                "base_low":    round(float(lows.iloc[-20:].min()), 4),
+                "ma10":  None,
+                "ma21":  round(ma21, 4),
+                "ma50":  round(ma50, 4),
+                "vcs":   None,
+                "rs":    0,  # RS will be low for beaten-down stocks
+                "vol_ratio": round(vol_ratio, 2),
+                "atr":   round(atr, 4),
+                "base_score": 0,
+                "base_type": "recovery",
+                "vcp_stages": 0,
+                "sector": sector,
+                "sector_rs_1m": None,
+                "market_score": market_score,
+                "pct_from_ma21": round((price - ma21) / ma21 * 100, 2),
+                "is_short": False,
+                "day_of_week": pd.Timestamp(signal_date).strftime("%a").upper(),
+                "w_stack_ok": 0,
+                "w_ema10": None,
+                "w_ema40": None,
+                "w_ema10_slope": None,
+                "w_above_ema10": 0,
+                "w_above_ema40": 0,
+                "within_1atr_wema10": 0,
+                "is_weekly_signal": 0,
+            })
+        except Exception:
+            continue
+
+    return recovery_signals
+
+
 # ── Exit simulator ─────────────────────────────────────────────────────────────
 
 
@@ -421,46 +571,75 @@ def _simulate_exit(
     """
     Walk forward from signal_day_idx+1 and find exit.
     Uses only future bars — no look-ahead.
+
+    Stop is set below the relevant MA (not ATR-based) so it matches
+    the actual signal logic. ATR is used only for targets.
     """
-    ticker = signal["ticker"]
-    atr = signal["atr"]
+    ticker   = signal["ticker"]
+    atr      = signal["atr"]
     is_short = signal["is_short"]
-    ma21 = signal.get("ma21")
+    ma21     = signal.get("ma21")
+    ma10     = signal.get("ma10")
+    ma50     = signal.get("ma50")
 
     if not atr or atr <= 0 or ticker not in bars_data:
         return None
 
-    # Weekly signals use wider stops and longer hold — weekly ATR is ~5x daily ATR
-    # but we're using daily ATR as proxy, so scale multipliers accordingly
     is_weekly = bool(signal.get("is_weekly_signal", 0))
-    if is_weekly:
-        stop_mult = params.get("w_stop_atr_mult", 2.5)   # wider stop — weekly noise is larger
-        t1_mult   = params.get("w_t1_atr_mult",   3.0)   # first target further out
-        t2_mult   = params.get("w_t2_atr_mult",   6.0)   # let winners run on weekly
-        t3_mult   = params.get("w_t3_atr_mult",  10.0)   # extended target
-        max_hold  = params.get("w_max_hold_days",  50)    # weekly trends take longer
-    else:
-        stop_mult = params["stop_atr_mult"]
-        t1_mult   = params["t1_atr_mult"]
-        t2_mult   = params["t2_atr_mult"]
-        t3_mult   = params["t3_atr_mult"]
-        max_hold  = params["max_hold_days"]
+    max_hold = params.get("w_max_hold_days", 50) if is_weekly else params["max_hold_days"]
+
+    # ── Stop price: use MA level from signal, not ATR ─────────────────────────
+    # Pick the tightest MA below entry that makes sense for the signal type
+    sig_type = signal.get("signal_type", "")
+    slip = params.get("slippage", 0.001)
+
+    is_recovery = sig_type == "RECOVERY"
 
     if not is_short:
-        stop_price = entry_price - stop_mult * atr
-        t1_price   = entry_price + t1_mult * atr
-        t2_price   = entry_price + t2_mult * atr
-        t3_price   = entry_price + t3_mult * atr
+        if is_recovery:
+            # Recovery signals: use 20-day low as stop — wider room for volatile bounces
+            base_low = signal.get("base_low")
+            stop_price = base_low * 0.98 if base_low else entry_price * 0.75
+            # Recovery gets wider safety cap: 25% max loss
+            stop_price = max(stop_price, entry_price * 0.75)
+            # Recovery gets longer hold and later trail activation
+            max_hold = 120
+        else:
+            # For MA bounce signals, stop goes just below the touched MA
+            if "MA10" in sig_type and ma10:
+                stop_price = ma10 * 0.99
+            elif "MA21" in sig_type and ma21:
+                stop_price = ma21 * 0.99
+            elif "MA50" in sig_type and ma50:
+                stop_price = ma50 * 0.99
+            elif ma10 and ma10 < entry_price:
+                stop_price = ma10 * 0.99
+            elif ma21 and ma21 < entry_price:
+                stop_price = ma21 * 0.99
+            else:
+                stop_price = entry_price * (1 - params["stop_atr_mult"] * atr / entry_price)
+
+        if not is_recovery:
+            # Safety cap: stop can't be more than 15% below entry
+            stop_price = max(stop_price, entry_price * 0.85)
     else:
-        stop_price = entry_price + stop_mult * atr
-        t1_price   = entry_price - t1_mult * atr
-        t2_price   = entry_price - t2_mult * atr
-        t3_price   = entry_price - t3_mult * atr
+        if ma10 and ma10 > entry_price:
+            stop_price = ma10 * 1.01
+        elif ma21 and ma21 > entry_price:
+            stop_price = ma21 * 1.01
+        else:
+            stop_price = entry_price * (1 + params["stop_atr_mult"] * atr / entry_price)
+
+        # Safety cap: stop can't be more than 15% above entry
+        stop_price = min(stop_price, entry_price * 1.15)
 
     df = bars_data[ticker]
     exit_price  = None
     exit_reason = None
     hold_days   = 0
+
+    # Precompute full MA50 series once — O(n) instead of O(n²) per-bar slicing
+    ma50_series = df["close"].rolling(50).mean()
 
     start_idx = signal_day_idx + 1
     end_idx   = min(start_idx + max_hold, len(trading_dates))
@@ -478,70 +657,48 @@ def _simulate_exit(
         bar_close = float(bar["close"].iloc[0])
         hold_days += 1
 
+        # O(1) lookup from precomputed series
+        ma50_val = ma50_series.get(bar_date)
+        dynamic_ma50 = float(ma50_val) if ma50_val is not None and not pd.isna(ma50_val) else None
+
         if not is_short:
+            # Hard stop first
             if bar_low <= stop_price:
-                slip = params.get("slippage", 0.001)
                 exit_price, exit_reason = stop_price * (1 - slip), "stop"
                 break
-            elif bar_high >= t3_price:
-                slip = params.get("slippage", 0.001)
-                exit_price, exit_reason = t3_price * (1 - slip), "t3"
-                break
-            elif bar_high >= t2_price:
-                slip = params.get("slippage", 0.001)
-                exit_price, exit_reason = t2_price * (1 - slip), "t2"
-                break
-            elif bar_high >= t1_price:
-                slip = params.get("slippage", 0.001)
-                exit_price, exit_reason = t1_price * (1 - slip), "t1"
-                break
-            elif params["ma21_cross_exit"] and ma21 and bar_close < ma21 * 0.99:
-                slip = params.get("slippage", 0.001)
-                exit_price, exit_reason = bar_close * (1 - slip), "ma21_cross"
-                break
+            # Trailing MA50 exit — delayed activation (20d normal, 30d recovery)
+            else:
+                trail_delay = 30 if is_recovery else 20
+                if hold_days >= trail_delay and dynamic_ma50 and bar_close < dynamic_ma50 * 0.99:
+                    exit_price, exit_reason = bar_close * (1 - slip), "trail_ma50"
+                    break
         else:
+            # Hard stop first
             if bar_high >= stop_price:
-                slip = params.get("slippage", 0.001)
                 exit_price, exit_reason = stop_price * (1 + slip), "stop"
                 break
-            elif bar_low <= t3_price:
-                slip = params.get("slippage", 0.001)
-                exit_price, exit_reason = t3_price * (1 + slip), "t3"
-                break
-            elif bar_low <= t2_price:
-                slip = params.get("slippage", 0.001)
-                exit_price, exit_reason = t2_price * (1 + slip), "t2"
-                break
-            elif bar_low <= t1_price:
-                slip = params.get("slippage", 0.001)
-                exit_price, exit_reason = t1_price * (1 + slip), "t1"
-                break
-            elif params["ma21_cross_exit"] and ma21 and bar_close > ma21 * 1.01:
-                slip = params.get("slippage", 0.001)
-                exit_price, exit_reason = bar_close * (1 + slip), "ma21_cross"
+            # Trailing MA50 exit — only active after 20 hold days
+            elif hold_days >= 20 and dynamic_ma50 and bar_close > dynamic_ma50 * 1.01:
+                exit_price, exit_reason = bar_close * (1 + slip), "trail_ma50"
                 break
 
     if exit_price is None:
-        # Timeout — exit at last available close
-        last_idx = min(start_idx + max_hold - 1, len(trading_dates) - 1)
+        last_idx  = min(start_idx + max_hold - 1, len(trading_dates) - 1)
         last_date = trading_dates[last_idx]
-        last_bar = df[df.index == last_date]
-        exit_price  = float(last_bar["close"].iloc[0]) if not last_bar.empty else entry_price
+        last_bar  = df[df.index == last_date]
+        exit_price  = float(last_bar["close"].iloc[0]) * (1 - slip) if not last_bar.empty else entry_price
         exit_reason = "timeout"
 
-    # P&L — apply slippage on both legs
-    slippage = params.get("slippage", 0.001)
+    # ── P&L — slippage already baked into exit_price above ───────────────────
+    # entry_price comes in pre-slippage from the caller, so just use directly
     if not is_short:
-        adj_entry = entry_price * (1 + slippage)
-        adj_exit  = exit_price  * (1 - slippage)
+        pnl_pct = (exit_price - entry_price) / entry_price * 100
     else:
-        adj_entry = entry_price * (1 - slippage)
-        adj_exit  = exit_price  * (1 + slippage)
+        pnl_pct = (entry_price - exit_price) / entry_price * 100
 
-    raw_pnl = (adj_exit - adj_entry) / adj_entry * 100
-    pnl_pct = round(-raw_pnl if is_short else raw_pnl, 3)
-    risk_pct = stop_mult * atr / adj_entry * 100
-    pnl_r   = round(pnl_pct / risk_pct, 2) if risk_pct else 0
+    pnl_pct = round(pnl_pct, 3)
+    risk_pct = abs(entry_price - stop_price) / entry_price * 100
+    pnl_r    = round(pnl_pct / risk_pct, 2) if risk_pct > 0 else 0
 
     return {
         "signal_date":  signal["signal_date"],
@@ -549,17 +706,15 @@ def _simulate_exit(
         "ticker":       ticker,
         "signal_type":  signal["signal_type"],
         "entry_type":   entry_type,
-        "entry_price":  round(adj_entry, 4),
-        "exit_price":   round(adj_exit, 4),
+        "entry_price":  round(entry_price, 4),
+        "exit_price":   round(exit_price, 4),
         "exit_reason":  exit_reason,
         "hold_days":    hold_days,
         "pnl_pct":      pnl_pct,
         "pnl_r":        pnl_r,
         "atr":          round(atr, 4),
         "stop_price":   round(stop_price, 4),
-        "t1_price":     round(t1_price, 4),
-        "t2_price":     round(t2_price, 4),
-        "t3_price":     round(t3_price, 4),
+        "trail_exit":   1 if exit_reason == "trail_ma50" else 0,
         "vcs":          signal.get("vcs"),
         "rs":           signal.get("rs"),
         "base_score":   signal.get("base_score", 0),
@@ -641,9 +796,7 @@ def _simulate_breakout_exit(
             "pnl_r":        0.0,
             "atr":          round(atr, 4),
             "stop_price":   round(base_low, 4),
-            "t1_price":     None,
-            "t2_price":     None,
-            "t3_price":     None,
+            "trail_exit":   0,
             "vcs":          signal.get("vcs"),
             "rs":           signal.get("rs"),
             "base_score":   signal.get("base_score", 0),
@@ -723,9 +876,7 @@ def _simulate_breakout_exit(
         "pnl_r":        pnl_r,
         "atr":          round(atr, 4),
         "stop_price":   round(stop_price, 4),
-        "t1_price":     round(t1_price, 4),
-        "t2_price":     round(t2_price, 4),
-        "t3_price":     round(t3_price, 4),
+        "trail_exit":   0,
         "vcs":          signal.get("vcs"),
         "rs":           signal.get("rs"),
         "base_score":   signal.get("base_score", 0),
@@ -781,7 +932,7 @@ def run_historical_reconstruction(
         return {"error": "Insufficient history"}
 
     total_days = len(scan_dates)
-    print(f"[historical_bt] Scanning {total_days} trading days ({scan_dates[0].date()} → {scan_dates[-1].date()})")
+    print(f"[historical_bt] Scanning {total_days} trading days ({scan_dates[0].date()} to {scan_dates[-1].date()})")
 
     # ── Fast-path: if signals already exist but trades are missing, skip screener ──
     with get_conn() as conn:
@@ -793,14 +944,14 @@ def run_historical_reconstruction(
         date_to_idx = {d: i for i, d in enumerate(all_dates)}
         with get_conn() as conn:
             rows = conn.execute(
-                "SELECT id, signal_date, ticker, signal_type, atr, ma21, vcs, rs, "
+                "SELECT id, signal_date, ticker, signal_type, atr, ma10, ma21, ma50, vcs, rs, "
                 "base_score, sector, market_score, is_short, entry_close, entry_next_open "
                 "FROM historical_signals ORDER BY signal_date"
             ).fetchall()
         all_trades = []
         for row in rows:
             sig = dict(zip(
-                ["signal_id","signal_date","ticker","signal_type","atr","ma21","vcs","rs",
+                ["signal_id","signal_date","ticker","signal_type","atr","ma10","ma21","ma50","vcs","rs",
                  "base_score","sector","market_score","is_short","entry_close","entry_next_open"], row
             ))
             day_idx = date_to_idx.get(pd.Timestamp(sig["signal_date"]), -1)
@@ -875,31 +1026,70 @@ def run_historical_reconstruction(
         signals_found += len(signals)
 
         # Simulate exits for each signal
+        regime_gate   = params.get("regime_gate", 48)
+        min_rs        = params.get("min_rs", 0)
+        min_base_score = params.get("min_base_score", 0)
+        min_vol_ratio = params.get("min_vol_ratio", 0)
         for sig in signals:
-            for entry_type in params.get("entry_types", ["close"]):
-                slip = params.get("slippage", 0.001)
-                if entry_type == "close":
-                    raw_entry   = sig.get("entry_close")
-                    entry_price = raw_entry * (1 + slip) if raw_entry else None
-                else:
-                    raw_entry   = sig.get("entry_next_open")
-                    entry_price = raw_entry * (1 + slip) if raw_entry else None
-
-                if not entry_price:
+            # Quality gate — skip low-quality signals entirely (not saved to DB)
+            is_sig_short = sig.get("signal_type") == "SHORT"
+            is_recovery  = sig.get("signal_type") == "RECOVERY"
+            if is_sig_short:
+                # Shorts need LOW rs (weak stocks only) — invert the gate
+                if (sig.get("rs") or 100) > 45:
                     continue
+            elif is_recovery:
+                # Recovery signals — beaten-down stocks, skip RS/base gates
+                # Volume surge already checked in detector
+                pass
+            else:
+                # Longs need HIGH rs and volume confirmation
+                if (sig.get("rs") or 0) < min_rs:
+                    continue
+                if (sig.get("vol_ratio") or 0) < min_vol_ratio:
+                    continue
+                if (sig.get("base_score") or 0) < min_base_score:
+                    continue
+            allowed_types = params.get("allowed_signal_types")
+            if allowed_types and sig.get("signal_type") not in allowed_types:
+                continue
+            market_score = sig.get("market_score") or 0
+            if is_sig_short or is_recovery:
+                # Shorts/recovery — no market regime gate
+                # Recovery happens DURING weak markets (that's the capitulation)
+                regime_filtered = 0
+            else:
+                regime_filtered = 1 if (regime_gate > 0 and market_score < regime_gate) else 0
+            sig["regime_filtered"] = regime_filtered
 
-                trade = _simulate_exit(
-                    sig, bars_data, day_idx, all_dates, params,
-                    entry_price, entry_type
-                )
-                if trade:
-                    all_trades.append(trade)
+            # Only simulate trades when regime allows it
+            if not regime_filtered:
+                for entry_type in params.get("entry_types", ["close"]):
+                    slip = params.get("slippage", 0.001)
+                    if entry_type == "close":
+                        raw_entry   = sig.get("entry_close")
+                        entry_price = raw_entry * (1 + slip) if raw_entry else None
+                    else:
+                        raw_entry   = sig.get("entry_next_open")
+                        entry_price = raw_entry * (1 + slip) if raw_entry else None
 
-            # Breakout entry simulation — longs only
-            if not sig.get("is_short"):
-                bo_trade = _simulate_breakout_exit(sig, bars_data, day_idx, all_dates, params)
-                if bo_trade:
-                    all_trades.append(bo_trade)
+                    if not entry_price:
+                        continue
+
+                    trade = _simulate_exit(
+                        sig, bars_data, day_idx, all_dates, params,
+                        entry_price, entry_type
+                    )
+                    if trade:
+                        trade["regime_filtered"] = 0
+                        all_trades.append(trade)
+
+                # Breakout entry simulation — longs only
+                if not sig.get("is_short"):
+                    bo_trade = _simulate_breakout_exit(sig, bars_data, day_idx, all_dates, params)
+                    if bo_trade:
+                        bo_trade["regime_filtered"] = 0
+                        all_trades.append(bo_trade)
 
             # Strip internal _result before saving
             sig_clean = {k: v for k, v in sig.items() if not k.startswith("_")}

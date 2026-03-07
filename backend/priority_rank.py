@@ -385,3 +385,93 @@ def get_top_short_picks(signals: list, sector_rs_data: dict = None, max_take: in
         },
     }
 
+
+
+def get_focus_list(scan_data: dict, sector_rs_data: dict = None, max_picks: int = 8) -> dict:
+    """
+    Master focus list — combines ALL signal types and ranks into top N picks.
+    
+    This answers: "I can only trade 5-8 names today. Which ones?"
+    
+    Sources (in priority bonus order):
+    1. HVE retest entry-ready   (+20 bonus pts — highest conviction)
+    2. EP delayed reaction ready (+15 bonus pts)
+    3. MA bounce long signals    (base priority score)
+    4. Pattern signals           (base priority score)
+    
+    Deduplicates by ticker — same stock in multiple lists gets best score only.
+    """
+    candidates = {}   # ticker → best scored signal
+
+    def _add(signal, bonus: float = 0.0, source: str = ""):
+        if not signal or not signal.get("ticker"):
+            return
+        ticker = signal["ticker"]
+        rank_data  = calculate_priority_score(signal, sector_rs_data)
+        base_score = rank_data["priority_score"]
+        total      = round(base_score + bonus, 1)
+
+        existing = candidates.get(ticker)
+        if existing is None or total > existing["focus_score"]:
+            candidates[ticker] = {
+                **signal,
+                **rank_data,
+                "focus_score":  total,
+                "focus_source": source,
+                "focus_bonus":  bonus,
+            }
+
+    # 1. HVE entry-ready (highest bonus)
+    for s in scan_data.get("hve_signals", []):
+        if s.get("hve_entry_ok"):
+            _add(s, bonus=20.0, source="HVE_RETEST")
+        else:
+            _add(s, bonus=8.0, source="HVE_WATCH")
+
+    # 2. EP entry-ready
+    for s in scan_data.get("ep_signals", []):
+        if s.get("ep_entry_ok"):
+            _add(s, bonus=15.0, source="EP_READY")
+        else:
+            _add(s, bonus=5.0, source="EP_WATCH")
+
+    # 3. Long signals (MA bounce)
+    for s in scan_data.get("long_signals", []):
+        source = "MA10" if s.get("ma10_touch") else "MA21" if s.get("ma21_touch") else "MA50"
+        _add(s, bonus=0.0, source=source)
+
+    # 4. Pattern signals
+    for s in scan_data.get("pattern_signals", []):
+        _add(s, bonus=2.0, source="PATTERN")
+
+    # Sort by focus_score
+    ranked = sorted(candidates.values(), key=lambda x: (
+        x.get("focus_score", 0),
+        x.get("signal_score", 0),
+        x.get("rs", 0),
+    ), reverse=True)
+
+    # Assign tiers
+    for i, s in enumerate(ranked):
+        if i < 3:
+            s["priority_tier"] = TIER_TAKE
+        elif i < max_picks:
+            s["priority_tier"] = TIER_WATCH
+        else:
+            s["priority_tier"] = TIER_MONITOR
+
+    top = ranked[:max_picks]
+
+    return {
+        "focus_list":    top,
+        "all_ranked":    ranked[:30],
+        "take":          [s for s in top if s.get("priority_tier") == TIER_TAKE],
+        "watch":         [s for s in top if s.get("priority_tier") == TIER_WATCH],
+        "total_scanned": len(candidates),
+        "summary": {
+            "top_tickers":   [s["ticker"] for s in top],
+            "hve_in_list":   sum(1 for s in top if "HVE" in s.get("focus_source", "")),
+            "ep_in_list":    sum(1 for s in top if "EP" in s.get("focus_source", "")),
+            "ma_in_list":    sum(1 for s in top if s.get("focus_source") in ("MA10", "MA21", "MA50")),
+        },
+    }

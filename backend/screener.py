@@ -901,7 +901,7 @@ def analyse_stock(
         ma21_rising = ma21_slope is not None and ma21_slope > 0
         ma21_strong = ma21_slope is not None and ma21_slope > 0.5
         ma50_rising = ma50_slope is not None and ma50_slope > 0
-        coiling     = bool(ma10 and ma21 and ma10 < ma21 and
+        coiling     = bool(ma10 and ma21 and ma50 and ma10 < ma21 and
                            ma10 > ma50 and ma21 > ma50)
         above_ma200 = bool(ma200 and price > ma200)
 
@@ -1119,6 +1119,7 @@ def analyse_stock(
         ll_hl  = detect_ll_hl_pivot(df)
         darvas = detect_darvas_box(df)
         ep     = detect_ep_setup(df)
+        hve    = detect_hve_retest(df)
         flag   = detect_flag_pennant(df)
 
         flag_status = flag.get("flag_status")
@@ -1134,6 +1135,10 @@ def analyse_stock(
             setup_tag = "LL-HL PIVOT"
         elif darvas.get("darvas_status") == "approaching":
             setup_tag = "DARVAS"
+        elif hve.get("hve_entry_ok"):
+            setup_tag = "HVE RETEST"
+        elif hve.get("hve_detected"):
+            setup_tag = "HVE WATCH"
         elif ep.get("ep_entry_ok"):
             setup_tag = "EP DELAYED"
         elif ep.get("ep_detected"):
@@ -1235,6 +1240,18 @@ def analyse_stock(
             "ep_stop":         ep.get("ep_stop"),
             "ep_target":       ep.get("ep_target"),
             "ep_neglect":      ep.get("ep_neglect"),
+            # HVE (High Volume Earnings retest) fields
+            "hve_detected":       hve.get("hve_detected", False),
+            "hve_entry_ok":       hve.get("hve_entry_ok", False),
+            "hve_gap_date":       hve.get("hve_gap_date"),
+            "hve_gap_pct":        hve.get("hve_gap_pct"),
+            "hve_vol_ratio":      hve.get("hve_vol_ratio"),
+            "hve_gap_open":       hve.get("hve_gap_open"),
+            "hve_support_level":  hve.get("hve_support_level"),
+            "hve_test_count":     hve.get("hve_test_count"),
+            "hve_pct_from_level": hve.get("hve_pct_from_level"),
+            "hve_stop":           hve.get("hve_stop"),
+            "hve_days_since_gap": hve.get("hve_days_since_gap"),
         }
 
     except Exception as e:
@@ -1501,4 +1518,165 @@ def detect_ep_setup(df: pd.DataFrame, lookback_days: int = 5) -> dict:
 
     except Exception as e:
         print(f"[ep_detector] Error: {e}")
+        return _empty
+
+
+def detect_hve_retest(df: pd.DataFrame, lookback_days: int = 120) -> dict:
+    """
+    Detect High Volume Earnings (HVE) gap retest setups.
+
+    Pattern (Tom Hougaard methodology):
+    1. Stock had a major earnings gap (25%+) on extreme volume (5×+ ADV) in last 60-120 days
+    2. Price has since pulled back to test the HVE level (gap open or gap midpoint)
+    3. Currently sitting at or near the HVE with price holding (not collapsing through)
+    4. This test is the entry — SL below HVE candle low
+
+    Returns dict with hve_detected, hve_entry_ok, and all relevant HVE fields.
+    """
+    _empty = {
+        "hve_detected":       False,
+        "hve_entry_ok":       False,
+        "hve_gap_date":       None,
+        "hve_gap_pct":        None,
+        "hve_vol_ratio":      None,
+        "hve_gap_open":       None,
+        "hve_gap_high":       None,
+        "hve_gap_low":        None,
+        "hve_support_level":  None,   # the level price is retesting
+        "hve_test_count":     None,   # how many times tested so far
+        "hve_pct_from_level": None,   # % above/below the HVE support
+        "hve_stop":           None,
+        "hve_days_since_gap": None,
+    }
+
+    try:
+        if df is None or len(df) < 30:
+            return _empty
+
+        closes  = df["close"]
+        volumes = df["volume"] if "volume" in df.columns else None
+        highs   = df["high"]   if "high"   in df.columns else closes
+        lows    = df["low"]    if "low"    in df.columns else closes
+        opens   = df["open"]   if "open"   in df.columns else closes
+
+        if volumes is None:
+            return _empty
+
+        n = len(df)
+        scan_start = max(1, n - 1 - lookback_days)
+
+        # ── Step 1: Find the most recent HVE gap day ─────────────────────────
+        hve_idx  = None
+        hve_info = {}
+
+        for i in range(scan_start, n - 5):   # must be at least 5 days ago
+            prior_close = float(closes.iloc[i - 1])
+            day_open    = float(opens.iloc[i])
+            day_close   = float(closes.iloc[i])
+            day_high    = float(highs.iloc[i])
+            day_low     = float(lows.iloc[i])
+            day_vol     = float(volumes.iloc[i])
+
+            if prior_close <= 0:
+                continue
+
+            gap_pct = (day_open - prior_close) / prior_close * 100
+
+            # HVE requires a bigger gap than EP — minimum 25%
+            if gap_pct < 25.0:
+                continue
+
+            # Must close strong (not fade — fading gap = distribution, not HVE)
+            if day_close < day_open * 0.95:
+                continue
+
+            # Volume must be extreme — 5× ADV minimum
+            adv_start = max(0, i - 20)
+            adv_vols  = volumes.iloc[adv_start:i]
+            if len(adv_vols) < 5:
+                continue
+            adv = float(adv_vols.mean())
+            if adv <= 0:
+                continue
+
+            vol_ratio = day_vol / adv
+            if vol_ratio < 5.0:
+                continue
+
+            # Valid HVE day — keep the most recent one
+            hve_idx  = i
+            hve_info = {
+                "gap_pct":   round(gap_pct, 1),
+                "vol_ratio": round(vol_ratio, 1),
+                "gap_open":  round(day_open, 2),
+                "gap_high":  round(day_high, 2),
+                "gap_low":   round(day_low, 2),
+                "date":      str(df.index[i].date()) if hasattr(df.index[i], "date") else str(df.index[i]),
+            }
+
+        if hve_idx is None:
+            return _empty
+
+        # ── Step 2: Define the HVE support level ─────────────────────────────
+        # Support = gap open (the level price gapped to on earnings day)
+        # This is where institutional buyers stepped in — it's magnetic
+        hve_support = hve_info["gap_open"]
+        hve_gap_low = hve_info["gap_low"]
+
+        # ── Step 3: Count how many times price has tested the support ─────────
+        post_gap = closes.iloc[hve_idx + 1:]
+        post_lows = lows.iloc[hve_idx + 1:] if "low" in df.columns else post_gap
+
+        test_count = 0
+        in_test    = False
+        tolerance  = 0.05   # within 5% of support level counts as a test
+
+        for low_val in post_lows:
+            near_support = abs(float(low_val) - hve_support) / hve_support <= tolerance
+            if near_support and not in_test:
+                test_count += 1
+                in_test     = True
+            elif not near_support:
+                in_test = False
+
+        # ── Step 4: Current price vs HVE support ──────────────────────────────
+        current_price   = float(closes.iloc[-1])
+        current_low     = float(lows.iloc[-1]) if "low" in df.columns else current_price
+        days_since_gap  = (n - 1) - hve_idx
+        pct_from_level  = round((current_price - hve_support) / hve_support * 100, 1)
+
+        # ── Step 5: Entry conditions ──────────────────────────────────────────
+        # 1. Price is near the HVE support (within 8% above, or just testing it)
+        near_support_now = -2.0 <= pct_from_level <= 8.0
+
+        # 2. Price has not completely broken below HVE gap low (thesis intact)
+        above_gap_low = current_price > hve_gap_low * 0.97
+
+        # 3. At least one prior test (confirms support, not first approach)
+        # First approach can also work but is slightly riskier
+        has_prior_test = test_count >= 1
+
+        # 4. Not too old — HVE loses relevance after 4 months
+        not_too_old = days_since_gap <= 90
+
+        hve_entry_ok = bool(near_support_now and above_gap_low and not_too_old)
+
+        return {
+            "hve_detected":       True,
+            "hve_entry_ok":       hve_entry_ok,
+            "hve_gap_date":       hve_info["date"],
+            "hve_gap_pct":        hve_info["gap_pct"],
+            "hve_vol_ratio":      hve_info["vol_ratio"],
+            "hve_gap_open":       hve_info["gap_open"],
+            "hve_gap_high":       hve_info["gap_high"],
+            "hve_gap_low":        hve_info["gap_low"],
+            "hve_support_level":  round(hve_support, 2),
+            "hve_test_count":     test_count,
+            "hve_pct_from_level": pct_from_level,
+            "hve_stop":           round(hve_gap_low * 0.98, 2),
+            "hve_days_since_gap": days_since_gap,
+        }
+
+    except Exception as e:
+        print(f"[hve_detector] Error: {e}")
         return _empty

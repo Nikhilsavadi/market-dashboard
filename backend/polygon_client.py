@@ -252,7 +252,7 @@ def grouped_daily(target_date: str = None) -> dict:
             d -= timedelta(days=1)
         target_date = d.isoformat()
 
-    print(f"[polygon] Grouped daily → {target_date}")
+    print(f"[polygon] Grouped daily -> {target_date}")
     t0   = time.time()
     data = _get(f"/v2/aggs/grouped/locale/us/market/stocks/{target_date}",
                 {"adjusted": "true"})

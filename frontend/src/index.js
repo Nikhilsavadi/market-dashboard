@@ -88,44 +88,28 @@ function Root() {
   const [optionsPrefill, setOptionsPrefill] = useState(null);
   const handleOptionsAdd = (signal) => { setOptionsPrefill(signal); setView("options"); };
   const handleQuickAdd = (signal) => { setJournalPrefill(signal); setView("journal"); };
+  // Top nav hidden — only Market + EP Dash tabs live inside MainDashboard (App.js)
+  // To restore: uncomment the nav bar and view routing below
   return (
     <>
       <style>{NAV_CSS}</style>
+      {/* Top nav hidden — all navigation via MainDashboard tabs */}
+      <MainDashboard onQuickAdd={handleQuickAdd} />
+
+      {/* Hidden views (code preserved):
       <div className="top-nav">
         <div className="top-nav-logo">Signal Desk</div>
-        <button className={`top-nav-btn ${view === "market" ? "active" : ""}`} onClick={() => setView("market")}>
-          Market Overview
-        </button>
-        <button className={`top-nav-btn ${view === "dashboard" ? "active" : ""}`} onClick={() => setView("dashboard")}>
-          Live Signals
-        </button>
-        <button className={`top-nav-btn ${view === "pipeline" ? "active" : ""}`} onClick={() => setView("pipeline")}>
-          Watchlist Pipeline
-        </button>
-        <button className={`top-nav-btn ${view === "breakouts" ? "active" : ""}`} onClick={() => setView("breakouts")}>
-          Breakouts
-        </button>
-        <button className={`top-nav-btn ${view === "patterns" ? "active" : ""}`} onClick={() => setView("patterns")}>
-          Patterns
-        </button>
-        <button className={`top-nav-btn ${view === "journal" ? "active" : ""}`} onClick={() => setView("journal")}>
-          Journal
-        </button>
-        <button className={`top-nav-btn ${view === "options" ? "active" : ""}`} onClick={() => setView("options")}>
-          Options Desk
-        </button>
-        <button className={`top-nav-btn ${view === "edge" ? "active" : ""}`} onClick={() => setView("edge")}>
-          Edge Report
-        </button>
-        <button className={`top-nav-btn ${view === "micro" ? "active" : ""}`} onClick={() => setView("micro")}>
-          Micro Caps
-        </button>
-        <button className={`top-nav-btn ${view === "suggestions" ? "active" : ""}`} onClick={() => setView("suggestions")}>
-          💡 Suggestions
-        </button>
-        <button className={`top-nav-btn ${view === "backtest" ? "active" : ""}`} onClick={() => setView("backtest")}>
-          Backtest Lab
-        </button>
+        <button className={`top-nav-btn ${view === "market" ? "active" : ""}`} onClick={() => setView("market")}>Market Overview</button>
+        <button className={`top-nav-btn ${view === "dashboard" ? "active" : ""}`} onClick={() => setView("dashboard")}>Live Signals</button>
+        <button className={`top-nav-btn ${view === "pipeline" ? "active" : ""}`} onClick={() => setView("pipeline")}>Watchlist Pipeline</button>
+        <button className={`top-nav-btn ${view === "breakouts" ? "active" : ""}`} onClick={() => setView("breakouts")}>Breakouts</button>
+        <button className={`top-nav-btn ${view === "patterns" ? "active" : ""}`} onClick={() => setView("patterns")}>Patterns</button>
+        <button className={`top-nav-btn ${view === "journal" ? "active" : ""}`} onClick={() => setView("journal")}>Journal</button>
+        <button className={`top-nav-btn ${view === "options" ? "active" : ""}`} onClick={() => setView("options")}>Options Desk</button>
+        <button className={`top-nav-btn ${view === "edge" ? "active" : ""}`} onClick={() => setView("edge")}>Edge Report</button>
+        <button className={`top-nav-btn ${view === "micro" ? "active" : ""}`} onClick={() => setView("micro")}>Micro Caps</button>
+        <button className={`top-nav-btn ${view === "suggestions" ? "active" : ""}`} onClick={() => setView("suggestions")}>Suggestions</button>
+        <button className={`top-nav-btn ${view === "backtest" ? "active" : ""}`} onClick={() => setView("backtest")}>Backtest Lab</button>
       </div>
       {view === "market"    && <MarketSummary />}
       {view === "dashboard" && <MainDashboard onQuickAdd={handleQuickAdd} />}
@@ -138,6 +122,7 @@ function Root() {
       {view === "micro"    && <MicroCaps onQuickAdd={handleOptionsAdd} />}
       {view === "suggestions" && <SuggestedTrades onQuickAdd={handleQuickAdd} />}
       {view === "backtest"  && <BacktestApp />}
+      */}
     </>
   );
 }

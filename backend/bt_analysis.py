@@ -825,20 +825,58 @@ def full_analysis_report(signal_type: str = None) -> dict:
         count = 0
         cache_key = f"{signal_type}:0"
 
-    trades = get_historical_trades(signal_type=signal_type, limit=None)
+    trades = get_historical_trades(signal_type=signal_type, entry_type="next_open", limit=None)
+
+    # Fallback to all trades if no next_open entries found
+    if not trades:
+        trades = get_historical_trades(signal_type=signal_type, limit=None)
 
     if not trades:
         return {"error": "No historical trades found. Run reconstruction first."}
 
+    # ── All trades (unfiltered) ───────────────────────────────────────────────
     base_stats = compute_stats(trades)
     curve      = build_equity_curve(trades)
+    mae_mfe    = mae_mfe_analysis(signal_type)
 
-    mae_mfe = mae_mfe_analysis(signal_type)
+    # ── Regime-gated stats (market_score >= 48, same as live NEUTRAL gate) ───
+    # These are trades that would actually have been taken under the live strategy
+    gated_trades = [t for t in trades if (t.get("market_score") or 0) >= 48]
+    gated_stats  = compute_stats(gated_trades) if gated_trades else None
+    gated_curve  = build_equity_curve(gated_trades) if gated_trades else []
 
-    return {
+    # ── How many signals were filtered out by regime ──────────────────────────
+    try:
+        from database import get_conn
+        with get_conn() as conn:
+            filtered_count = conn.execute(
+                "SELECT COUNT(*) FROM historical_signals WHERE regime_filtered = 1"
+            ).fetchone()[0]
+            total_signals = conn.execute(
+                "SELECT COUNT(*) FROM historical_signals"
+            ).fetchone()[0]
+    except Exception:
+        filtered_count = 0
+        total_signals  = len(trades)
+
+    regime_summary = {
+        "total_signals":     total_signals,
+        "filtered_signals":  filtered_count,
+        "traded_signals":    total_signals - filtered_count,
+        "filter_pct":        round(filtered_count / total_signals * 100, 1) if total_signals else 0,
+        "gate_threshold":    48,
+    }
+
+    result = {
         "signal_type":          signal_type or "ALL",
         "total_trades":         len(trades),
         "base_stats":           base_stats,
+        # ── Regime-gated — the stats that matter for live trading ────────────
+        "gated_trades":         len(gated_trades),
+        "gated_stats":          gated_stats,
+        "gated_equity_curve":   gated_curve,
+        "regime_summary":       regime_summary,
+        # ── Full dimensional cuts ────────────────────────────────────────────
         "by_sector":            sector_analysis(signal_type),
         "by_market_regime":     market_regime_analysis(signal_type),
         "by_vcs":               vcs_analysis(signal_type),

@@ -186,7 +186,7 @@ def send_scan_alert(payload: dict, open_tickers: set = None):
         score = s.get("signal_score") or 0
         in_journal = s.get("ticker") in open_tickers
         passes = score >= alert_min and not in_journal
-        print(f"[alerts]   {s.get('ticker')}: score={score:.1f} journal={in_journal} → {'SEND' if passes else 'SKIP'}")
+        print(f"[alerts]   {s.get('ticker')}: score={score:.1f} journal={in_journal} -> {'SEND' if passes else 'SKIP'}")
 
     alertable_longs = [
         s for s in all_longs

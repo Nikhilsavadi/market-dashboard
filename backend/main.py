@@ -2,6 +2,9 @@
 main.py - FastAPI backend with all routes
 """
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import json
 import os
 import threading
@@ -51,6 +54,47 @@ def run_scan_job():
         run_scan()
     except Exception as e:
         print(f"[scheduler] Scan failed: {e}")
+
+
+def run_weekly_scan_job():
+    """Runs weekly screener after Saturday scan — populates weekly_signals in cache."""
+    print(f"[scheduler] Weekly scan triggered at {datetime.now()}")
+    try:
+        from scanner import fetch_bars, fetch_weekly_bars, get_alpaca_client
+        from universe_expander import get_scan_universe
+        from watchlist import ETFS
+        from sector_rs import SECTOR_ETFS
+        from weekly_screener import run_weekly_scan
+        import json, os
+
+        all_tickers = get_scan_universe()
+        all_etfs = list(set(ETFS + list(SECTOR_ETFS.values()) + ["SPY", "QQQ", "IWM"]))
+
+        if os.environ.get("POLYGON_API_KEY"):
+            from polygon_client import fetch_bars as pg_bars, fetch_weekly_bars as pg_weekly
+            bars        = pg_bars(all_tickers + all_etfs, days=500, interval="day", min_rows=20, label="weekly-scan")
+            weekly_bars = pg_weekly(all_tickers + all_etfs)
+        else:
+            client = get_alpaca_client()
+            bars        = fetch_bars(client, all_tickers + all_etfs)
+            weekly_bars = fetch_weekly_bars(client, all_tickers + all_etfs)
+
+        # RS ranks from latest daily cache
+        cache = _load_cache()
+        rs_ranks = {s["ticker"]: s.get("rs") for s in cache.get("signals", []) if s.get("ticker")}
+
+        weekly_results = run_weekly_scan(bars, weekly_bars, rs_ranks)
+
+        # Merge into existing cache
+        cache["weekly_signals"] = weekly_results
+        with open(CACHE_FILE, "w") as f:
+            json.dump(cache, f)
+
+        print(f"[scheduler] Weekly scan complete — "
+              f"{len(weekly_results.get('all_weekly', []))} signals cached")
+    except Exception as e:
+        print(f"[scheduler] Weekly scan failed: {e}")
+        import traceback; traceback.print_exc()
 
 
 scheduler = BackgroundScheduler(timezone="Europe/London")
@@ -280,6 +324,16 @@ scheduler.add_job(
     replace_existing=True,
 )
 
+# Saturday 10:30 UK — weekly screener runs AFTER the 09:00 scan
+# Uses Friday close data (full weekly candle) for clean weekly signals
+scheduler.add_job(
+    run_weekly_scan_job,
+    CronTrigger(day_of_week="sat", hour=10, minute=30, timezone="Europe/London"),
+    id="weekly_scan_job",
+    name="Weekly screener (Sat 10:30 UK — wEMA bounce, VCP, BO retest)",
+    replace_existing=True,
+)
+
 # Sunday 09:30 UK — runs AFTER the weekly report (08:00) so the brief
 # has fresh signal data. Gives clean data before Monday open.
 scheduler.add_job(
@@ -300,20 +354,62 @@ scheduler.add_job(
     replace_existing=True,
 )
 
+# Sunday 22:00 UK — weekly reconstruction auto-run
+# Runs after markets close and weekend scans complete so backtest data stays fresh
+def run_weekly_reconstruction():
+    print("[reconstruct] Weekly auto-reconstruction starting (Sun 22:00 UK)...")
+    try:
+        from historical_bt import run_historical_reconstruction
+        from scanner import fetch_bars, get_alpaca_client
+        from universe_expander import get_scan_universe
+        from watchlist import ETFS
+        from sector_rs import SECTOR_ETFS
+        import os
+
+        all_tickers = get_scan_universe()
+        all_etfs = list(set(ETFS + list(SECTOR_ETFS.values()) + ["SPY", "QQQ", "IWM"]))
+        stock_tickers = [t for t in all_tickers if t not in all_etfs]
+
+        if os.environ.get("POLYGON_API_KEY"):
+            from polygon_client import fetch_bars as pg_bars
+            bars = pg_bars(stock_tickers + all_etfs, days=500, interval="day", min_rows=20, label="reconstruct")
+        else:
+            client = get_alpaca_client()
+            bars = fetch_bars(client, stock_tickers + all_etfs)
+
+        run_historical_reconstruction(bars, lookback_days=365)
+        print("[reconstruct] Weekly auto-reconstruction complete")
+    except Exception as e:
+        print(f"[reconstruct] Weekly auto-reconstruction failed: {e}")
+        import traceback; traceback.print_exc()
+
+scheduler.add_job(
+    run_weekly_reconstruction,
+    CronTrigger(day_of_week="sun", hour=22, minute=0, timezone="Europe/London"),
+    id="weekly_reconstruction",
+    name="Weekly reconstruction (Sun 22:00 UK)",
+    replace_existing=True,
+)
+
 scheduler.start()
 print(
     "[main] Scheduler started — "
     "06:30 brief (Mon-Fri) · 08:00 brief (Sat-Sun) · "
     "07:00 scan (Tue-Sat) · 09:00 scan (Sat) · 09:30 scan (Sun) · "
-    "21:00 scan (Mon-Fri) · RVOL 30min · Sun 08:00 weekly report"
+    "21:00 scan (Mon-Fri) · RVOL 30min · Sun 08:00 weekly report · Sun 22:00 reconstruction"
 )
 if not CACHE_FILE.exists():
     print("[main] No cache — running initial scan in background...")
     t = threading.Thread(target=run_scan_job, daemon=True)
     t.start()
 else:
-    data = read_cache()
-    print(f"[main] Cache loaded — last scan: {data.get('scanned_at', 'unknown')}")
+    try:
+        data = json.loads(CACHE_FILE.read_text())
+        print(f"[main] Cache loaded — last scan: {data.get('scanned_at', 'unknown')}")
+    except Exception:
+        print("[main] Cache unreadable — running initial scan in background...")
+        t = threading.Thread(target=run_scan_job, daemon=True)
+        t.start()
 
 
 @app.on_event("shutdown")
@@ -397,6 +493,29 @@ def get_top_picks_endpoint(max_take: int = 2):
             "scanned_at":    cache.get("scanned_at"),
             "market_score":  cache.get("market", {}).get("score"),
         }
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/focus-list")
+def get_focus_list_endpoint(max_picks: int = 8):
+    """
+    Master focus list — top N names across ALL signal types (HVE, EP, MA bounce, patterns).
+    Answers: 'I can only trade 5-8 names today. Which ones?'
+    HVE retest and EP setups get priority bonuses over standard MA bounces.
+    """
+    try:
+        from priority_rank import get_focus_list
+        cache = _load_cache()
+        if not cache:
+            return {"error": "No scan data. Run a scan first.", "focus_list": []}
+        sector_rs = cache.get("sector_rs", {})
+        result = get_focus_list(cache, sector_rs_data=sector_rs, max_picks=max_picks)
+        result["scanned_at"]   = cache.get("scanned_at")
+        result["market_score"] = cache.get("market", {}).get("score")
+        result["market_label"] = cache.get("market", {}).get("label")
+        return result
     except Exception as e:
         import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -881,6 +1000,97 @@ def backtest_status():
         }
     except Exception:
         return {"historical_signals": 0, "historical_trades": 0, "ready": False}
+
+
+# ── Weekly scan endpoint ───────────────────────────────────────────────────────
+
+@app.get("/api/weekly-scan")
+def get_weekly_scan():
+    """
+    Return latest weekly scan results from cache.
+    Populated by the Saturday scan job.
+    """
+    cache = _load_cache()
+    weekly = cache.get("weekly_signals", {})
+    if not weekly:
+        return {
+            "status": "no_data",
+            "message": "No weekly scan data yet. Run a weekend scan to populate.",
+            "all_weekly": [], "ma_bounces": [], "vcps": [], "bo_retests": [],
+            "scanned_at": None,
+        }
+    return {
+        "status": "ok",
+        "all_weekly": weekly.get("all_weekly", [])[:80],
+        "ma_bounces": weekly.get("ma_bounces", [])[:50],
+        "vcps":       weekly.get("vcps", [])[:30],
+        "bo_retests": weekly.get("bo_retests", [])[:30],
+        "scanned_at": cache.get("scanned_at"),
+    }
+
+
+# ── Weekly backtest endpoints ──────────────────────────────────────────────────
+
+@app.post("/api/weekly-bt/reconstruct")
+def trigger_weekly_reconstruction(secret: str = "", lookback_weeks: int = 250):
+    """
+    Trigger weekly backtest reconstruction.
+    Scans week-by-week over lookback_weeks, simulates exits.
+    Poll /api/weekly-bt/status for progress.
+    """
+    import os
+    expected = os.environ.get("TRIGGER_SECRET", "")
+    if expected and secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid secret")
+
+    def _run():
+        try:
+            from weekly_bt import run_weekly_reconstruction
+            from scanner import fetch_bars, get_alpaca_client
+            from universe_expander import get_scan_universe
+            from watchlist import ETFS
+            from sector_rs import SECTOR_ETFS
+
+            all_tickers = get_scan_universe()
+            all_etfs = list(set(ETFS + list(SECTOR_ETFS.values()) + ["SPY", "QQQ", "IWM"]))
+
+            if os.environ.get("POLYGON_API_KEY"):
+                from polygon_client import fetch_bars as pg_bars, fetch_weekly_bars as pg_weekly
+                bars       = pg_bars(all_tickers + all_etfs, days=1800, interval="day", min_rows=20, label="weekly-bt")
+                weekly_bars = pg_weekly(all_tickers + all_etfs)
+            else:
+                client = get_alpaca_client()
+                from scanner import fetch_weekly_bars
+                bars        = fetch_bars(client, all_tickers + all_etfs)
+                weekly_bars = fetch_weekly_bars(client, all_tickers + all_etfs)
+
+            # RS ranks from latest cache
+            cache = _load_cache()
+            rs_ranks = {s["ticker"]: s.get("rs") for s in cache.get("signals", []) if s.get("ticker")}
+
+            run_weekly_reconstruction(bars, weekly_bars, rs_ranks, lookback_weeks=lookback_weeks)
+        except Exception as e:
+            print(f"[weekly-bt] Reconstruction error: {e}")
+            import traceback; traceback.print_exc()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return {"status": "started", "lookback_weeks": lookback_weeks,
+            "message": f"Weekly backtest reconstruction started ({lookback_weeks} weeks). Poll /api/weekly-bt/status."}
+
+
+@app.get("/api/weekly-bt/status")
+def get_weekly_bt_status():
+    """Progress of weekly backtest reconstruction."""
+    from weekly_bt import get_weekly_bt_progress
+    return get_weekly_bt_progress()
+
+
+@app.get("/api/weekly-bt/stats")
+def get_weekly_bt_stats_endpoint():
+    """Aggregated weekly backtest statistics."""
+    from weekly_bt import get_weekly_bt_stats
+    return get_weekly_bt_stats()
 
 
 @app.get("/api/backtest/analysis")
@@ -2725,3 +2935,263 @@ def clean_universe(secret: str = ""):
     conn.commit()
     conn.close()
     return {"removed": removed, "count": len(removed)}
+
+
+# ── Stockbee Episodic Pivot System ──────────────────────────────────────────
+
+@app.get("/api/ep-dashboard")
+def get_ep_dashboard():
+    """
+    Full Stockbee EP Dashboard:
+    - Today's new EPs by type (Classic, Delayed, 9M, Story, MomBurst)
+    - Active delayed EP watchlist
+    - Volume spikes (9M candidates)
+    - Market regime (S&P breadth)
+    - Top MAGNA-scored setups
+    """
+    try:
+        cache = read_cache()
+        ep_data = cache.get("stockbee_ep", {})
+        if not ep_data:
+            # Run a fresh EP scan from cached bars
+            return {
+                "status": "no_data",
+                "message": "No EP scan data yet. Run a scan first.",
+                "all_eps": [], "classic_eps": [], "delayed_eps": [],
+                "nine_m_eps": [], "story_eps": [], "mom_bursts": [],
+                "volume_spikes": [], "sp500_breadth": {},
+                "ep_watchlist": [], "summary": {},
+            }
+        return ep_data
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ep-dashboard/watchlist")
+def get_ep_watchlist_endpoint():
+    """EP Watchlist — tracks Classic and 9M EPs for delayed breakout entries."""
+    try:
+        from stockbee_ep import get_ep_watchlist_display, init_ep_watchlist_table
+        init_ep_watchlist_table()
+        watchlist = get_ep_watchlist_display()
+        return {
+            "watchlist": watchlist,
+            "total": len(watchlist),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ep-dashboard/volume-spikes")
+def get_volume_spikes():
+    """Volume spike scanner — stocks trading 3x+ avg volume or 9M+ shares."""
+    try:
+        cache = _load_cache()
+        ep_data = cache.get("stockbee_ep", {})
+        return {
+            "volume_spikes": ep_data.get("volume_spikes", []),
+            "scanned_at": cache.get("scanned_at"),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ep-dashboard/breadth")
+def get_sp500_breadth():
+    """S&P 500 breadth market regime indicator."""
+    try:
+        cache = _load_cache()
+        ep_data = cache.get("stockbee_ep", {})
+        return ep_data.get("sp500_breadth", {
+            "pct_above_50ma": None,
+            "regime": "NEUTRAL",
+            "regime_color": "yellow",
+            "trade_guidance": "No data yet",
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ep-dashboard/magna/{ticker}")
+def get_magna_score(ticker: str):
+    """Get MAGNA score for a single ticker on demand."""
+    try:
+        from stockbee_ep import calculate_magna_score, fetch_fundamentals_batch
+        cache = _load_cache()
+        bars_data = {}
+        # Try to get bars from scan cache
+        for s in cache.get("all_stocks", []):
+            if s.get("ticker") == ticker.upper():
+                # We don't have raw bars in cache, need to fetch
+                break
+
+        # Fetch fresh data for this ticker
+        from fetch_utils import fetch_bars_batch
+        bars = fetch_bars_batch([ticker.upper()], period="380d", interval="1d",
+                               min_rows=20, batch_size=1, label="magna")
+        df = bars.get(ticker.upper())
+        if df is None:
+            raise HTTPException(status_code=404, detail=f"No data for {ticker}")
+
+        fund = fetch_fundamentals_batch([ticker.upper()], delay=0)
+        magna = calculate_magna_score(ticker.upper(), df, fund.get(ticker.upper(), {}))
+        return magna
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ep-dashboard/config")
+def get_ep_config():
+    """Get current EP configuration thresholds (all configurable)."""
+    from stockbee_ep import EP_CONFIG
+    return EP_CONFIG
+
+
+@app.post("/api/ep-dashboard/scan")
+def trigger_ep_scan(secret: str = ""):
+    """Manually trigger a Stockbee EP scan."""
+    expected = os.environ.get("TRIGGER_SECRET", "")
+    if expected and secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid secret")
+
+    def _run():
+        try:
+            from stockbee_ep import run_ep_scan, fetch_fundamentals_batch, init_ep_watchlist_table
+            from scanner import fetch_bars, get_alpaca_client
+            from universe_expander import get_scan_universe
+            from watchlist import ETFS
+            from sector_rs import SECTOR_ETFS
+
+            init_ep_watchlist_table()
+
+            all_tickers = get_scan_universe()
+            all_etfs = list(set(ETFS + list(SECTOR_ETFS.values()) + ["SPY", "QQQ", "IWM"]))
+            stock_tickers = [t for t in all_tickers if t not in all_etfs]
+
+            client = get_alpaca_client()
+            import os as _os
+            if _os.environ.get("POLYGON_API_KEY"):
+                from polygon_client import fetch_bars as pg_bars
+                bars = pg_bars(stock_tickers + all_etfs, days=380, interval="day",
+                              min_rows=20, label="ep-scan")
+            else:
+                bars = fetch_bars(client, stock_tickers + all_etfs)
+
+            # Fetch fundamentals for top RS stocks (limit to save API calls)
+            top_tickers = []
+            for ticker, df in bars.items():
+                if ticker in all_etfs or df is None or len(df) < 50:
+                    continue
+                top_tickers.append(ticker)
+            top_tickers = top_tickers[:100]  # limit fundamentals fetching
+
+            print(f"[ep-scan] Fetching fundamentals for {len(top_tickers)} tickers...")
+            fund = fetch_fundamentals_batch(top_tickers, delay=0.2)
+
+            print("[ep-scan] Running EP scan...")
+            result = run_ep_scan(bars, fund)
+
+            # Merge into cache
+            cache = read_cache()
+            cache["stockbee_ep"] = result
+            CACHE_FILE.write_text(json.dumps(cache, indent=2, default=str))
+
+            print(f"[ep-scan] Complete: {result['summary']}")
+        except Exception as e:
+            print(f"[ep-scan] Error: {e}")
+            import traceback; traceback.print_exc()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return {"status": "EP scan triggered", "message": "Running in background. Check /api/ep-dashboard in ~5-10 mins."}
+
+
+@app.post("/api/ep-dashboard/backtest")
+def trigger_ep_backtest(secret: str = "", lookback_days: int = 365):
+    """
+    Run historical EP backtest — scans all stocks for EP events over the
+    lookback period and simulates entries/exits.
+
+    Returns comprehensive stats: win rate, avg return, breakdown by EP type,
+    gap size, volume ratio, neglect status, technical position, and
+    multi-period holding analysis (1d, 3d, 5d, 10d, 20d).
+    """
+    expected = os.environ.get("TRIGGER_SECRET", "")
+    if expected and secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid secret")
+
+    def _run():
+        try:
+            from ep_backtest import run_ep_backtest_from_scan
+            result = run_ep_backtest_from_scan(lookback_days=lookback_days)
+
+            # Save to cache
+            cache = read_cache()
+            cache["ep_backtest"] = result
+            CACHE_FILE.write_text(json.dumps(cache, indent=2, default=str))
+            print(f"[ep-bt] Saved to cache: {result['total_trades']} trades")
+        except Exception as e:
+            print(f"[ep-bt] Error: {e}")
+            import traceback; traceback.print_exc()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return {
+        "status": "EP backtest triggered",
+        "lookback_days": lookback_days,
+        "message": f"Running {lookback_days} days of EP history. Check /api/ep-dashboard/backtest/results in ~5-15 mins."
+    }
+
+
+@app.get("/api/ep-dashboard/backtest/results")
+def get_ep_backtest_results():
+    """Get results from the last EP backtest run."""
+    try:
+        cache = read_cache()
+        bt = cache.get("ep_backtest")
+        if not bt:
+            return {
+                "status": "no_data",
+                "message": "No EP backtest results yet. Trigger one via POST /api/ep-dashboard/backtest",
+            }
+        # Don't send all_trades in the summary endpoint (too large)
+        summary = {k: v for k, v in bt.items() if k != "all_trades"}
+        summary["has_trade_data"] = bool(bt.get("all_trades"))
+        summary["trade_count"] = len(bt.get("all_trades", []))
+        return summary
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ep-dashboard/backtest/trades")
+def get_ep_backtest_trades(
+    ep_type: Optional[str] = None,
+    min_gap: Optional[float] = None,
+    min_vol_ratio: Optional[float] = None,
+    neglected: Optional[bool] = None,
+    limit: int = 200,
+):
+    """Get individual EP backtest trades with filters."""
+    try:
+        cache = read_cache()
+        bt = cache.get("ep_backtest", {})
+        trades = bt.get("all_trades", [])
+
+        if ep_type:
+            trades = [t for t in trades if t.get("ep_type") == ep_type]
+        if min_gap is not None:
+            trades = [t for t in trades if (t.get("gap_pct") or 0) >= min_gap]
+        if min_vol_ratio is not None:
+            trades = [t for t in trades if (t.get("vol_ratio") or 0) >= min_vol_ratio]
+        if neglected is not None:
+            trades = [t for t in trades if t.get("neglected") == neglected]
+
+        return {
+            "total": len(trades),
+            "trades": trades[:limit],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

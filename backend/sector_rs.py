@@ -488,6 +488,8 @@ def calculate_sector_rs(bars_data: dict, benchmark: str = "SPY") -> dict:
         return {}
 
     spy_closes = bars_data[benchmark]["close"]
+    spy_ret_1d = _period_return(spy_closes, 1)
+    spy_ret_1w = _period_return(spy_closes, 5)
     spy_ret_1m = _period_return(spy_closes, 21)
     spy_ret_3m = _period_return(spy_closes, 63)
 
@@ -499,10 +501,13 @@ def calculate_sector_rs(bars_data: dict, benchmark: str = "SPY") -> dict:
 
         closes = bars_data[etf]["close"]
         price = float(closes.iloc[-1])
+        ret_1d = _period_return(closes, 1)
+        ret_1w = _period_return(closes, 5)
         ret_1m = _period_return(closes, 21)
         ret_3m = _period_return(closes, 63)
-        ret_1d = _period_return(closes, 1)
 
+        rs_1d = round((ret_1d - spy_ret_1d) * 100, 2) if ret_1d and spy_ret_1d else 0
+        rs_1w = round((ret_1w - spy_ret_1w) * 100, 2) if ret_1w and spy_ret_1w else 0
         rs_1m = round((ret_1m - spy_ret_1m) * 100, 2) if ret_1m and spy_ret_1m else 0
         rs_3m = round((ret_3m - spy_ret_3m) * 100, 2) if ret_3m and spy_ret_3m else 0
 
@@ -522,8 +527,11 @@ def calculate_sector_rs(bars_data: dict, benchmark: str = "SPY") -> dict:
             "etf": etf,
             "price": round(price, 2),
             "chg_1d": round(ret_1d * 100, 2) if ret_1d else 0,
+            "ret_1w_pct": round(ret_1w * 100, 2) if ret_1w else 0,
             "ret_1m_pct": round(ret_1m * 100, 2) if ret_1m else 0,
             "ret_3m_pct": round(ret_3m * 100, 2) if ret_3m else 0,
+            "rs_vs_spy_1d": rs_1d,
+            "rs_vs_spy_1w": rs_1w,
             "rs_vs_spy_1m": rs_1m,
             "rs_vs_spy_3m": rs_3m,
             "above_ma21": above_ma21,
@@ -532,7 +540,8 @@ def calculate_sector_rs(bars_data: dict, benchmark: str = "SPY") -> dict:
 
     sorted_sectors = sorted(
         sector_results.items(),
-        key=lambda x: x[1]["rs_vs_spy_1m"]
+        key=lambda x: x[1]["rs_vs_spy_1m"],
+        reverse=True
     )
     for rank, (name, _) in enumerate(sorted_sectors, 1):
         sector_results[name]["rank"] = rank

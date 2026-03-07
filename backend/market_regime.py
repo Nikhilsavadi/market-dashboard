@@ -128,7 +128,7 @@ def score_etf(closes) -> tuple:
 
     # -- SMA signals — weighted by recency ----------------------------------
     sma_values = {}
-    sma_weights = {10: 3, 20: 3, 50: 2, 200: 1}  # shorter = more weight
+    sma_weights = {10: 5, 20: 4, 50: 2, 200: 1}  # sharply front-weighted
     for period, weight in sma_weights.items():
         if n >= period:
             sma = float(closes.iloc[-period:].mean())
@@ -139,9 +139,9 @@ def score_etf(closes) -> tuple:
 
     # MA cross signals
     if 20 in sma_values and 50 in sma_values:
-        tot += 2  # medium weight
+        tot += 3  # medium-high weight
         if sma_values[20] > sma_values[50]:
-            pos += 2
+            pos += 3
 
     if 50 in sma_values and 200 in sma_values:
         tot += 1  # low weight — very lagging
@@ -150,10 +150,10 @@ def score_etf(closes) -> tuple:
 
     # -- Performance signals — weighted by recency --------------------------
     perf_weights = {
-        5:   3,   # 1W — highest weight, most current
-        21:  3,   # 1M — highest weight
+        5:   5,   # 1W — highest weight, most current
+        21:  4,   # 1M — high weight
         63:  2,   # 3M — medium weight
-        252: 1,   # 1Y — lowest weight, lagging
+        252: 1,   # 1Y — lowest weight, very lagging
     }
     for days, weight in perf_weights.items():
         r = _pct_return(closes, days)
@@ -225,14 +225,14 @@ def oratnek_market_conditions(bars_data: dict) -> dict:
     vix       = get_vix()
     vix_label = None
     if vix is not None:
-        total_sig += 1
-        if vix < 20:          # below 20 = healthy / risk-on
-            total_pos += 1
+        total_sig += 3   # VIX weighted 3x — it's the most real-time fear signal
+        if vix < 18:          # below 18 = healthy / risk-on (tighter than before)
+            total_pos += 3
         if   vix < 15:  vix_label = "Complacent"
-        elif vix < 20:  vix_label = "Low"
-        elif vix < 25:  vix_label = "Normal"
-        elif vix < 30:  vix_label = "Elevated"
-        elif vix < 35:  vix_label = "High Fear"
+        elif vix < 18:  vix_label = "Low"
+        elif vix < 22:  vix_label = "Normal"
+        elif vix < 27:  vix_label = "Elevated"
+        elif vix < 32:  vix_label = "High Fear"
         else:           vix_label = "Panic"
 
     # -- Final score ----------------------------------------------------------
@@ -415,7 +415,7 @@ def check_regime_change(new_score: int) -> dict:
                 f"{playbook}"
             )
             _send(msg)
-            print(f"[market_regime] Regime change alert sent: {old_gate} → {new_gate}")
+            print(f"[market_regime] Regime change alert sent: {old_gate} -> {new_gate}")
         except Exception as e:
             print(f"[market_regime] Alert failed: {e}")
 

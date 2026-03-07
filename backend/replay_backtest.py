@@ -202,7 +202,7 @@ def run_backtest_on_signals(
     if not tickers:
         return {"results": [], "summary": {}}
 
-    print(f"[backtest] Fetching forward bars for {len(tickers)} tickers {start_date} → {end_date}")
+    print(f"[backtest] Fetching forward bars for {len(tickers)} tickers {start_date} -> {end_date}")
 
     bars_map = fetch_bars_batch(
         tickers,

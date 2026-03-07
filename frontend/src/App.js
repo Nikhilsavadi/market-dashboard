@@ -470,6 +470,7 @@ async function fetchDashboardData(rawData) {
     ma50Bounces: Array.isArray(raw.ma50_bounces) ? raw.ma50_bounces.map(norm) : [],
     topShorts:   Array.isArray(raw.short_signals) ? raw.short_signals.slice(0, 12).map(norm) : [],
     epSignals:   Array.isArray(raw.ep_signals)    ? raw.ep_signals.map(norm)    : [],
+    hveSignals:  Array.isArray(raw.hve_signals)   ? raw.hve_signals.map(norm)   : [],
     indices: {
       SPY: { ...spy, name: "S&P 500",      ticker: "SPY" },
       QQQ: { ...qqq, name: "NASDAQ 100",   ticker: "QQQ" },
@@ -796,651 +797,68 @@ function IndexChip({ name, chg, above21ema }) {
   );
 }
 
-/* ─── INLINE SIGNAL CHART ────────────────────────────────────────────────── */
-function SignalChart({ s }) {
-  const [open, setOpen] = useState(false);
 
-  const data = s.chart_data || s.chartData;
-  if (!data || data.length === 0) return null;
+// ── EP + HVE Tab ──────────────────────────────────────────────────────────────
 
-  // ── Layout constants
-  const W = 420, H = 200;
-  const PAD = { top: 8, right: 8, bottom: 28, left: 44 };
-  const VOL_H = 36;                          // height of volume sub-panel
-  const PRICE_H = H - PAD.top - PAD.bottom - VOL_H - 4;
-  const innerW  = W - PAD.left - PAD.right;
-
-  // ── Price scale
-  const highs  = data.map(d => d.h);
-  const lows   = data.map(d => d.l);
-  const pMin   = Math.min(...lows)   * 0.998;
-  const pMax   = Math.max(...highs)  * 1.002;
-  const py = v => PAD.top + PRICE_H - ((v - pMin) / (pMax - pMin)) * PRICE_H;
-
-  // ── Volume scale
-  const vMax = Math.max(...data.map(d => d.v));
-  const vy = v => VOL_H - (v / vMax) * VOL_H;   // bar height, drawn from bottom
-
-  // ── X scale
-  const n  = data.length;
-  const bw = innerW / n;                        // bar slot width
-  const cx = i => PAD.left + (i + 0.5) * bw;   // candle centre x
-
-  // ── Y-axis labels (4 price levels)
-  const yTicks = [0, 0.33, 0.66, 1].map(t => pMin + t * (pMax - pMin));
-
-  // ── X-axis labels (show ~5 dates, evenly spaced)
-  const xStep = Math.max(1, Math.floor(n / 5));
-  const xLabels = data
-    .map((d, i) => ({ i, label: d.d.slice(5) }))  // MM-DD
-    .filter((_, i) => i % xStep === 0);
-
-  // ── Key levels for reference lines
-  const levels = [
-    s.ma200  && { y: py(s.ma200),  color: "rgba(120,123,134,0.5)", dash: "4,3", label: "200" },
-    s.pivot_line && s.ll_hl_detected && { y: py(s.pivot_line), color: "rgba(45,180,60,0.6)",  dash: "3,2", label: "PVT" },
-    s.box_top    && s.darvas_detected && { y: py(s.box_top),   color: "rgba(124,77,255,0.6)", dash: "3,2", label: "BOX" },
-  ].filter(Boolean).filter(l => l.y >= PAD.top && l.y <= PAD.top + PRICE_H);
-
-  const volY = PAD.top + PRICE_H + 4;   // top of volume panel
+function HVECard({ s, onQuickAdd }) {
+  const entryOk   = s.hve_entry_ok;
+  const borderCol = entryOk ? "#ff9f43" : "var(--border)";
 
   return (
-    <div style={{ marginBottom: 8 }}>
-      {/* Toggle button */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          width: "100%", padding: "4px 0", cursor: "pointer",
-          background: "var(--bg2)", border: "1px solid var(--border)",
-          borderRadius: 2, color: "var(--text3)", fontSize: 9,
-          letterSpacing: 1, fontFamily: "inherit",
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-        }}
-      >
-        <span style={{ fontSize: 10 }}>{open ? "▲" : "▼"}</span>
-        {open ? "HIDE CHART" : "SHOW CHART  ·  60D"}
-      </button>
+    <div style={{ marginBottom:8, padding:"10px 14px", borderRadius:4,
+      background:"var(--bg2)", border:`1px solid ${borderCol}`,
+      borderLeft:`3px solid ${borderCol}` }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
 
-      {open && (
-        <div style={{
-          marginTop: 4, borderRadius: 3, overflow: "hidden",
-          border: "1px solid var(--border)", background: "var(--bg2)",
-        }}>
-          <svg
-            width="100%" viewBox={`0 0 ${W} ${H}`}
-            style={{ display: "block", fontFamily: "inherit" }}
-          >
-            {/* ── Background */}
-            <rect width={W} height={H} fill="var(--bg2)" />
+        {/* Ticker */}
+        <a href={tvUrl(s.ticker)} target="_blank" rel="noopener noreferrer"
+          style={{ fontWeight:700, fontSize:14, color:"#ff9f43", textDecoration:"none" }}>
+          {s.ticker}
+        </a>
 
-            {/* ── Grid lines */}
-            {yTicks.map((v, i) => (
-              <line key={i}
-                x1={PAD.left} x2={W - PAD.right}
-                y1={py(v)} y2={py(v)}
-                stroke="rgba(0,0,0,0.06)" strokeWidth="1"
-              />
-            ))}
+        {/* Entry badge */}
+        <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:2,
+          background: entryOk ? "rgba(255,159,67,0.15)" : "var(--bg3)",
+          color: entryOk ? "#ff9f43" : "var(--text3)",
+          border: `1px solid ${entryOk ? "rgba(255,159,67,0.4)" : "var(--border)"}` }}>
+          {entryOk ? "🔁 AT RETEST" : "👁 WATCHING"}
+        </span>
 
-            {/* ── Y-axis price labels */}
-            {yTicks.map((v, i) => (
-              <text key={i}
-                x={PAD.left - 4} y={py(v) + 3.5}
-                textAnchor="end" fontSize="8" fill="var(--text3)"
-              >
-                {v >= 1000 ? v.toFixed(0) : v.toFixed(2)}
-              </text>
-            ))}
+        {/* Gap info */}
+        <span style={{ fontSize:10, color:"var(--text2)" }}>
+          Gap <strong>{s.hve_gap_pct}%</strong> · {s.hve_days_since_gap}d ago · vol {s.hve_vol_ratio}×
+        </span>
 
-            {/* ── X-axis date labels */}
-            {xLabels.map(({ i, label }) => (
-              <text key={i}
-                x={cx(i)} y={H - PAD.bottom + 12}
-                textAnchor="middle" fontSize="7.5" fill="var(--text3)"
-              >
-                {label}
-              </text>
-            ))}
+        {/* Test count */}
+        <span style={{ fontSize:10, color:"var(--text3)" }}>
+          {s.hve_test_count} test{s.hve_test_count !== 1 ? "s" : ""} so far
+        </span>
 
-            {/* ── Key level reference lines */}
-            {levels.map((lv, i) => (
-              <g key={i}>
-                <line
-                  x1={PAD.left} x2={W - PAD.right}
-                  y1={lv.y} y2={lv.y}
-                  stroke={lv.color} strokeWidth="1" strokeDasharray={lv.dash}
-                />
-                <text x={W - PAD.right + 2} y={lv.y + 3.5}
-                  fontSize="7" fill={lv.color} textAnchor="start"
-                >{lv.label}</text>
-              </g>
-            ))}
+        {/* % from support */}
+        {s.hve_pct_from_level != null && (
+          <span style={{ fontSize:10, fontWeight:600,
+            color: Math.abs(s.hve_pct_from_level) <= 3 ? "#ff9f43" : "var(--text3)" }}>
+            {s.hve_pct_from_level > 0 ? "+" : ""}{s.hve_pct_from_level}% from support
+          </span>
+        )}
 
-            {/* ── EMA lines */}
-            {[
-              { key: "e5", color: "rgba(245,166,35,0.8)",   label: "EMA50" },
-              { key: "e2", color: "rgba(124,77,255,0.75)",  label: "EMA21" },
-              { key: "e1", color: "rgba(41,98,255,0.8)",    label: "EMA10" },
-            ].map(({ key, color }) => {
-              const pts = data
-                .map((d, i) => `${cx(i)},${py(d[key])}`)
-                .join(" ");
-              return (
-                <polyline key={key}
-                  points={pts} fill="none"
-                  stroke={color} strokeWidth="1.2"
-                />
-              );
-            })}
+        {/* Key levels */}
+        <span style={{ fontSize:10, color:"var(--text3)", marginLeft:"auto" }}>
+          Support <strong style={{ color:"var(--text)" }}>${s.hve_support_level}</strong>
+          {s.hve_stop && <> · Stop <strong style={{ color:"var(--red)" }}>${s.hve_stop}</strong></>}
+        </span>
 
-            {/* ── Candlesticks */}
-            {data.map((d, i) => {
-              const bull = d.c >= d.o;
-              const bodyColor  = bull ? "#2d7a3a" : "#c43a2a";
-              const wickColor  = bull ? "#3a9a4a" : "#d44a3a";
-              const bodyTop    = py(Math.max(d.o, d.c));
-              const bodyBot    = py(Math.min(d.o, d.c));
-              const bodyH      = Math.max(1, bodyBot - bodyTop);
-              const candleW    = Math.max(1, bw * 0.65);
-              const x          = cx(i);
-
-              return (
-                <g key={i}>
-                  {/* Wick */}
-                  <line
-                    x1={x} x2={x}
-                    y1={py(d.h)} y2={py(d.l)}
-                    stroke={wickColor} strokeWidth="0.8"
-                  />
-                  {/* Body */}
-                  <rect
-                    x={x - candleW / 2} y={bodyTop}
-                    width={candleW} height={bodyH}
-                    fill={bodyColor}
-                    opacity={bull ? 0.85 : 0.9}
-                  />
-                </g>
-              );
-            })}
-
-            {/* ── Volume bars */}
-            {data.map((d, i) => {
-              const bull    = d.c >= d.o;
-              const barH    = (d.v / vMax) * VOL_H;
-              const barW    = Math.max(1, bw * 0.65);
-              return (
-                <rect key={i}
-                  x={cx(i) - barW / 2}
-                  y={volY + VOL_H - barH}
-                  width={barW} height={barH}
-                  fill={bull ? "rgba(45,122,58,0.45)" : "rgba(196,58,42,0.35)"}
-                />
-              );
-            })}
-
-            {/* ── Volume panel separator */}
-            <line
-              x1={PAD.left} x2={W - PAD.right}
-              y1={volY} y2={volY}
-              stroke="rgba(0,0,0,0.08)" strokeWidth="1"
-            />
-
-            {/* ── Legend: EMA colours */}
-            {[
-              { color: "rgba(41,98,255,0.9)",   label: "EMA10" },
-              { color: "rgba(124,77,255,0.9)",  label: "EMA21" },
-              { color: "rgba(245,166,35,0.9)",  label: "EMA50" },
-            ].map(({ color, label }, i) => (
-              <g key={i} transform={`translate(${PAD.left + i * 56}, ${PAD.top})`}>
-                <line x1="0" x2="10" y1="4" y2="4" stroke={color} strokeWidth="1.5" />
-                <text x="13" y="7" fontSize="7.5" fill="var(--text3)">{label}</text>
-              </g>
-            ))}
-          </svg>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BounceSection({ title, color, stocks, maKey, onQuickAdd }) {
-  if (!stocks.length) return (
-    <div className="section">
-      <div className="section-hdr">
-        <span className="section-title" style={{ color }}>{title}</span>
-        <span className="section-count">0 signals</span>
-      </div>
-      <div className="empty">No {title} bounce signals today</div>
-    </div>
-  );
-
-  return (
-    <div className="section">
-      <div className="section-hdr">
-        <span className="section-title" style={{ color }}>{title} Bounce</span>
-        <span className="section-count">{stocks.length} signals</span>
-        {(() => {
-          const themed = stocks.filter(s => s.theme);
-          const themeGroups = {};
-          themed.forEach(s => { themeGroups[s.theme] = (themeGroups[s.theme] || 0) + 1; });
-          const top = Object.entries(themeGroups).sort((a,b) => b[1]-a[1]).slice(0,3);
-          if (!top.length) return null;
-          return (
-            <span style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-              {top.map(([theme, cnt]) => {
-                const st = THEME_STYLES[theme];
-                if (!st) return null;
-                return (
-                  <span key={theme} style={{
-                    fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 2,
-                    background: st.bg, color: st.color, border: `1px solid ${st.border}`,
-                  }}>
-                    {st.label} {cnt > 1 ? `×${cnt}` : ""}
-                  </span>
-                );
-              })}
-            </span>
-          );
-        })()}
-        <div className="ma-legend">
-          <span style={{ fontSize: 9, color: "var(--text3)" }}>vol &gt; 1.2x avg · price ABOVE MA, within threshold</span>
-        </div>
-      </div>
-      <div className="bounce-grid">
-        {stocks.map(s => (
-          <div className="bounce-card" key={s.ticker} style={{ borderLeftColor: color, borderLeftWidth: 2 }}>
-            <div className="bounce-card-top">
-              <span className="bounce-card-ticker"><TVLink ticker={s.ticker}>{s.ticker} ↗</TVLink></span>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <MABadge ma={maKey} />
-                {s.ma21BelowMA && maKey === "MA21" && (
-                  <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 2, background: "rgba(255,214,0,0.12)", color: "var(--yellow)", border: "1px solid rgba(255,214,0,0.3)", fontWeight: 700 }}>
-                    ▼ VCP DIP
-                  </span>
-                )}
-                <Pill value={s.chg} />
-                <ThemeBadge s={s} />
-                <ThemeBadge s={s} />
-                <EarningsBadge s={s} />
-                <SectorAlignBadge s={s} />
-                <MASlopeBadge s={s} />
-                <CoilingBadge s={s} />
-                <SetupTagBadge s={s} />
-                <WeeklyStackBadge s={s} />
-                {onQuickAdd && (
-                  <button onClick={() => onQuickAdd({ ...s, signal_type: maKey })} style={{
-                    padding: "2px 8px", fontSize: 9, cursor: "pointer", borderRadius: 3,
-                    border: "1px solid var(--accent)", background: "transparent", color: "var(--accent)",
-                    fontFamily: "inherit", letterSpacing: 0.5, whiteSpace: "nowrap",
-                  }}>+ Journal</button>
-                )}
-              </div>
-            </div>
-
-            {/* VCS bar — critical signal */}
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
-                <span style={{ fontSize: 9, color: "var(--text3)", letterSpacing: 1 }}>VCS (VOLATILITY CONTRACTION)</span>
-                <span style={{
-                  fontSize: 11, fontWeight: 700,
-                  color: s.vcs <= 3 ? "var(--green)" : s.vcs <= 5 ? "var(--yellow)" : "var(--orange)"
-                }}>
-                  {s.vcs}/10 {s.vcs <= 3 ? "🔥 COILED" : s.vcs <= 5 ? "✓ TIGHT" : "~OK"}
-                </span>
-              </div>
-              <div style={{ height: 3, background: "var(--bg4)", borderRadius: 2, overflow: "hidden" }}>
-                <div style={{
-                  height: "100%", borderRadius: 2,
-                  width: `${(s.vcs / 10) * 100}%`,
-                  background: s.vcs <= 3 ? "var(--green)" : s.vcs <= 5 ? "var(--yellow)" : "var(--orange)",
-                  transition: "width 0.3s",
-                }} />
-              </div>
-            </div>
-
-            {/* Inline price chart */}
-            <SignalChart s={s} />
-
-            {/* LL-HL Pivot + Darvas detail row */}
-            {(s.ll_hl_detected || s.darvas_detected) && (
-              <div style={{
-                display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap",
-                padding: "5px 7px", borderRadius: 3,
-                background: "var(--bg2)", border: "1px solid var(--border)",
-              }}>
-                {s.ll_hl_detected && (
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>LL-HL</span>
-                    <span style={{ fontSize: 9, fontWeight: 700, color: "#2d7a3a" }}>
-                      HL: {s.hl_price != null ? `$${s.hl_price}` : "—"}
-                    </span>
-                    <span style={{ fontSize: 9, color: "var(--text3)" }}>→</span>
-                    <span style={{
-                      fontSize: 9, fontWeight: 700,
-                      color: s.approaching_pivot ? "#2d7a3a" : s.pivot_broken ? "#b8820a" : "var(--text)",
-                    }}>
-                      Pivot: {s.pivot_line != null ? `$${s.pivot_line}` : "—"}
-                      {s.pct_from_pivot != null && (
-                        <span style={{ fontWeight: 400, marginLeft: 3, opacity: 0.8 }}>
-                          ({s.pct_from_pivot > 0 ? "+" : ""}{s.pct_from_pivot}%)
-                        </span>
-                      )}
-                    </span>
-                    {s.approaching_pivot && (
-                      <span style={{ fontSize: 8, color: "#2d7a3a", fontWeight: 700 }}>⚡ NEAR</span>
-                    )}
-                  </div>
-                )}
-                {s.ll_hl_detected && s.darvas_detected && (
-                  <span style={{ color: "var(--text3)", fontSize: 9 }}>|</span>
-                )}
-                {s.darvas_detected && (
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>DARVAS</span>
-                    <span style={{ fontSize: 9, fontWeight: 700, color: "#7c4dff" }}>
-                      Box: {s.box_bottom != null ? `$${s.box_bottom}` : "—"} – {s.box_top != null ? `$${s.box_top}` : "—"}
-                    </span>
-                    {s.box_bars != null && (
-                      <span style={{ fontSize: 8, color: "var(--text3)" }}>({s.box_bars}d)</span>
-                    )}
-                    {s.darvas_status === "approaching" && (
-                      <span style={{ fontSize: 8, color: "#7c4dff", fontWeight: 700 }}>⚡ NEAR TOP</span>
-                    )}
-                    {s.darvas_status === "breakout" && (
-                      <span style={{ fontSize: 8, color: "#b8820a", fontWeight: 700 }}>🔥 BO</span>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ── Flag / Pennant detail panel ─────────────────────────── */}
-            {(s.flagDetected || s.flag_detected) && (() => {
-              const fd = s.flagDetected || s.flag_detected;
-              const ft = s.flagType     || s.flag_type;
-              const fs = s.flagStatus   || s.flag_status;
-              const pp = s.polePct      || s.pole_pct;
-              const pb = s.poleBars     || s.pole_bars;
-              const fb = s.flagBars     || s.flag_bars;
-              const fr = s.flagRetracePct || s.flag_retrace_pct;
-              const tt = s.tlTouches    || s.tl_touches;
-              const bl = s.flagBreakoutLevel || s.flag_breakout_level;
-              const st = s.flagStopPrice || s.flag_stop_price;
-              const tg = s.flagTargetPrice || s.flag_target_price;
-              const vd = s.volDryFlag   || s.vol_dry_flag;
-              const pv = s.poleVolRatio || s.pole_vol_ratio;
-
-              const statusColor = fs === "breaking"  ? "#ff5252"
-                                : fs === "broken_out" ? "#ff7070"
-                                : "#e07048";
-              const statusLabel = fs === "breaking"  ? "⚡ AT TRIGGER"
-                                : fs === "broken_out" ? "🔥 BROKEN OUT"
-                                : "👁 WATCH";
-              const typeLabel = ft === "pennant" ? "PENNANT" : "BULL FLAG";
-              const rr = bl && st && tg
-                ? ((tg - bl) / (bl - st)).toFixed(1)
-                : null;
-
-              return (
-                <div style={{
-                  marginBottom: 8, padding: "8px 10px", borderRadius: 4,
-                  background: "rgba(255,82,82,0.05)",
-                  border: `1px solid ${statusColor}44`,
-                  borderLeft: `3px solid ${statusColor}`,
-                }}>
-                  {/* Header row */}
-                  <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: statusColor }}>
-                      🚩 {typeLabel}
-                    </span>
-                    <span style={{
-                      fontSize: 8, fontWeight: 700, padding: "1px 6px", borderRadius: 2,
-                      background: `${statusColor}22`, color: statusColor,
-                      border: `1px solid ${statusColor}55`,
-                    }}>{statusLabel}</span>
-                    {vd && (
-                      <span style={{
-                        fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 2,
-                        background: "rgba(45,122,58,0.12)", color: "#4ac891",
-                        border: "1px solid rgba(74,200,145,0.4)",
-                      }}>📉 VOL DRY</span>
-                    )}
-                  </div>
-
-                  {/* Pole stats */}
-                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 5 }}>
-                    <div>
-                      <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>POLE </span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: "var(--green)" }}>
-                        +{pp?.toFixed(1)}%
-                      </span>
-                      <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 3 }}>
-                        in {pb}d
-                      </span>
-                      {pv && (
-                        <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 4 }}>
-                          vol {pv}×
-                        </span>
-                      )}
-                    </div>
-                    <div>
-                      <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>FLAG </span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text)" }}>
-                        {fb}d
-                      </span>
-                      <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 3 }}>
-                        -{fr?.toFixed(0)}% retrace
-                      </span>
-                    </div>
-                    <div>
-                      <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>TL TOUCHES </span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: tt >= 4 ? "var(--green)" : "var(--yellow)" }}>
-                        {tt}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Entry / Stop / Target row */}
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    {bl && (
-                      <div>
-                        <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>TRIGGER </span>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: statusColor }}>
-                          ${bl.toFixed(2)}
-                        </span>
-                      </div>
-                    )}
-                    {st && (
-                      <div>
-                        <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>STOP </span>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: "var(--red)" }}>
-                          ${st.toFixed(2)}
-                        </span>
-                        {s.price && st && (
-                          <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 3 }}>
-                            {((s.price - st) / s.price * 100).toFixed(1)}% risk
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {tg && (
-                      <div>
-                        <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>TARGET </span>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: "var(--green)" }}>
-                          ${tg.toFixed(2)}
-                        </span>
-                        <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 3 }}>
-                          (measured move)
-                        </span>
-                      </div>
-                    )}
-                    {rr && (
-                      <div>
-                        <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>R:R </span>
-                        <span style={{ fontSize: 10, fontWeight: 700,
-                          color: parseFloat(rr) >= 2.5 ? "var(--green)" : parseFloat(rr) >= 1.5 ? "var(--yellow)" : "var(--text3)" }}>
-                          1:{rr}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* ── Stop / Target / Exit plan ─────────────────────────────── */}
-            {s.stop_price != null && (
-              <div style={{
-                marginBottom: 8, padding: "7px 9px", borderRadius: 3,
-                background: "var(--bg2)", border: "1px solid var(--border)",
-              }}>
-                {/* Stop + Targets row */}
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 5 }}>
-                  <div>
-                    <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>STOP </span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "var(--red)" }}>
-                      ${s.stop_price.toFixed(2)}
-                    </span>
-                    {s.stop_basis && (
-                      <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 3 }}>
-                        ({s.stop_basis === "swing_low" ? "swing" : "atr"})
-                      </span>
-                    )}
-                    {s.price && s.stop_price && (
-                      <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 4 }}>
-                        {((s.price - s.stop_price) / s.price * 100).toFixed(1)}% risk
-                      </span>
-                    )}
-                  </div>
-                  {s.target_1 != null && (
-                    <div>
-                      <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>T1 </span>
-                      <span style={{ fontSize: 10, fontWeight: 600, color: "var(--green)" }}>
-                        ${s.target_1.toFixed(2)}
-                      </span>
-                      <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 3 }}>1R</span>
-                    </div>
-                  )}
-                  {s.target_2 != null && (
-                    <div>
-                      <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>T2 </span>
-                      <span style={{ fontSize: 10, fontWeight: 600, color: "var(--green)" }}>
-                        ${s.target_2.toFixed(2)}
-                      </span>
-                      <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 3 }}>2R</span>
-                    </div>
-                  )}
-                  {s.target_3 != null && (
-                    <div>
-                      <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>T3 </span>
-                      <span style={{ fontSize: 10, fontWeight: 600, color: "var(--green)" }}>
-                        ${s.target_3.toFixed(2)}
-                      </span>
-                      <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 3 }}>3.5R</span>
-                    </div>
-                  )}
-                  {s.ema21_trail != null && (
-                    <div>
-                      <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>EMA21 </span>
-                      <span style={{ fontSize: 10, color: "var(--purple)" }}>
-                        ${s.ema21_trail.toFixed(2)}
-                      </span>
-                      <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 3 }}>trail anchor</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Partial exit plan — inline 4-step strip */}
-                {s.partial_plan && (
-                  <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-                    {[
-                      { label: "Entry→T1", action: "Hold full",         color: "#787b86" },
-                      { label: "T1 hit",   action: "Sell 1/3 · BE",     color: "#089981" },
-                      { label: "T2 hit",   action: "Sell 1/3 · EMA21",  color: "#f5a623" },
-                      { label: "T3 hit",   action: "Sell 1/3 · EMA10",  color: "#2962ff" },
-                    ].map((step, i) => (
-                      <div key={i} style={{
-                        display: "flex", alignItems: "center", gap: 3,
-                        padding: "2px 6px", borderRadius: 2,
-                        background: "var(--bg3)", border: `1px solid var(--border)`,
-                        borderLeft: `2px solid ${step.color}`,
-                      }}>
-                        <span style={{ fontSize: 8, color: step.color, fontWeight: 700 }}>{step.label}</span>
-                        <span style={{ fontSize: 7, color: "var(--text3)" }}>{step.action}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="bounce-card-body">
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">PRICE</span>
-                <span className="bounce-stat-val">{fmtPrice(s.price)}</span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">{maKey}</span>
-                <span className="bounce-stat-val">{fmtPrice(s[maKey.toLowerCase()])}</span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">{s.ma21BelowMA && maKey === "MA21" ? "% BELOW" : "% ABOVE"}</span>
-                <span className="bounce-stat-val" style={{
-                  color: s.ma21BelowMA && maKey === "MA21" ? "var(--yellow)" : "var(--green)",
-                  fontWeight: 700
-                }}>
-                  {s.ma21BelowMA && maKey === "MA21" ? "" : "+"}{(((s.price - s[maKey.toLowerCase()]) / s.price) * 100).toFixed(2)}%
-                </span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">VOL RATIO</span>
-                <span className="bounce-stat-val" style={{ color: s.volRatio > 1.5 ? "var(--green)" : "var(--text)" }}>
-                  {s.volRatio}x
-                </span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">VOL</span>
-                <span className="bounce-stat-val">{fmtVol(s.vol)}</span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">RS (M)</span>
-                <span className="bounce-stat-val" style={{ color: s.rs > 90 ? "var(--green)" : "var(--text)" }}>
-                  {s.rs.toFixed(0)}
-                </span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">SECTOR</span>
-                <span className="bounce-stat-val" style={{ color: "var(--text3)", fontSize: 9 }}>
-                  {s.sector || "—"}
-                  {s.theme && THEME_STYLES[s.theme] && (
-                    <span style={{
-                      marginLeft: 5, fontSize: 8, fontWeight: 700,
-                      color: THEME_STYLES[s.theme].color,
-                    }}>
-                      · {THEME_STYLES[s.theme].label}
-                    </span>
-                  )}
-                </span>
-              </div>
-              {(s.wEma10 ?? s.w_ema10) != null && (
-                <div className="bounce-stat">
-                  <span className="bounce-stat-label">W EMA10</span>
-                  <span className="bounce-stat-val" style={{
-                    color: (s.wAboveEma10 ?? s.w_above_ema10) ? "var(--green)" : "var(--orange)",
-                  }}>
-                    ${(s.wEma10 ?? s.w_ema10).toFixed(2)}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
+        {/* Log button */}
+        {onQuickAdd && (
+          <button onClick={() => onQuickAdd({ ...s, signal_type:"HVE" })}
+            style={{ padding:"2px 8px", fontSize:9, cursor:"pointer", borderRadius:3,
+              border:"1px solid #ff9f43", background:"transparent",
+              color:"#ff9f43", fontFamily:"inherit" }}>+ Log</button>
+        )}
       </div>
     </div>
   );
 }
-
-// ── EP Tab ────────────────────────────────────────────────────────────────────
 
 function EPCard({ s, onQuickAdd }) {
   const entryOk   = s.ep_entry_ok;
@@ -1585,94 +1003,90 @@ function EPCard({ s, onQuickAdd }) {
         )}
       </div>
 
-      {/* Inline chart */}
-      <SignalChart s={s} />
     </div>
   );
 }
 
 function EPTab({ data, onQuickAdd }) {
-  const { epSignals = [], market } = data;
-  const entryReady = epSignals.filter(s => s.ep_entry_ok);
-  const watchlist  = epSignals.filter(s => !s.ep_entry_ok);
+  const { epSignals = [], hveSignals = [] } = data;
+  const epReady    = epSignals.filter(s => s.ep_entry_ok);
+  const epWatch    = epSignals.filter(s => !s.ep_entry_ok);
+  const hveReady   = hveSignals.filter(s => s.hve_entry_ok);
+  const hveWatch   = hveSignals.filter(s => !s.hve_entry_ok);
+  const totalSetups = epSignals.length + hveSignals.length;
+
+  const SectionHeader = ({ icon, label, count, color }) => (
+    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10,
+      fontSize:10, fontWeight:700, color, letterSpacing:1 }}>
+      {icon} {label}
+      <span style={{ fontSize:9, padding:"1px 6px", borderRadius:2,
+        background:`${color}18`, color, border:`1px solid ${color}40` }}>{count}</span>
+    </div>
+  );
 
   return (
     <div>
       <RegimeGate compact={true} />
 
-      {/* Explanation box */}
-      <div style={{
-        marginBottom: 14, padding: "12px 14px", borderRadius: 4,
-        background: "rgba(255,152,0,0.06)", border: "1px solid rgba(255,152,0,0.2)",
-      }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#ff9800", marginBottom: 6, letterSpacing: 0.5 }}>
-          ⚡ EPISODIC PIVOT — DELAYED REACTION SETUPS
+      {/* Two-column legend */}
+      <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
+        <div style={{ flex:1, minWidth:220, padding:"10px 14px", borderRadius:4,
+          background:"rgba(255,152,0,0.06)", border:"1px solid rgba(255,152,0,0.2)" }}>
+          <div style={{ fontSize:10, fontWeight:700, color:"#ff9800", marginBottom:5 }}>
+            ⚡ EP — Episodic Pivot
+          </div>
+          <div style={{ fontSize:9, color:"var(--text3)", lineHeight:1.6 }}>
+            Major earnings gap (≥10%, ≥3× vol) in last 5 days. Entry on pullback 3–20% from EP high,
+            above EP open. Stop below EP day low.
+          </div>
         </div>
-        <div style={{ fontSize: 10, color: "var(--text2)", lineHeight: 1.6 }}>
-          Stocks that had a major earnings-driven gap (≥10%, ≥3× volume) in the last 5 days
-          and have since pulled back into a lower-risk entry zone. The original EP day signals
-          institutional repricing — the delayed entry catches the second leg after early holders take profits.
-        </div>
-        <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
-          {[
-            { label: "Entry zone", desc: "3–20% pullback from EP high, above EP day open" },
-            { label: "EP stop",    desc: "Below EP day low — thesis dead if lost" },
-            { label: "Target",     desc: "2× initial gap magnitude from entry" },
-            { label: "Neglect",    desc: "Stock flat/down 3 months before EP = higher conviction" },
-          ].map((tip, i) => (
-            <div key={i} style={{ fontSize: 9, color: "var(--text3)" }}>
-              <span style={{ color: "#ff9800", fontWeight: 700 }}>{tip.label}: </span>{tip.desc}
-            </div>
-          ))}
+        <div style={{ flex:1, minWidth:220, padding:"10px 14px", borderRadius:4,
+          background:"rgba(255,159,67,0.06)", border:"1px solid rgba(255,159,67,0.25)" }}>
+          <div style={{ fontSize:10, fontWeight:700, color:"#ff9f43", marginBottom:5 }}>
+            🔁 HVE — High Volume Earnings Retest
+          </div>
+          <div style={{ fontSize:9, color:"var(--text3)", lineHeight:1.6 }}>
+            Large gap (≥25%, ≥5× vol) in last 120 days. Price returning to test the gap-open level.
+            Tom Hougaard methodology — enter on 1–2nd test of HVE, stop below gap low.
+          </div>
         </div>
       </div>
 
-      {epSignals.length === 0 ? (
-        <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
-          No EP setups detected in the last 5 days.
-          {" "}EP setups are most common around earnings season (Jan, Apr, Jul, Oct).
+      {totalSetups === 0 ? (
+        <div style={{ padding:"40px 20px", textAlign:"center", color:"var(--text3)", fontSize:11 }}>
+          No EP or HVE setups detected. Most common around earnings season.
         </div>
       ) : (
         <>
-          {/* Entry-ready */}
-          {entryReady.length > 0 && (
-            <div style={{ marginBottom: 20 }}>
-              <div style={{
-                fontSize: 10, fontWeight: 700, color: "#ff9800",
-                letterSpacing: 1, marginBottom: 10,
-                display: "flex", alignItems: "center", gap: 8,
-              }}>
-                ⚡ ENTRY ZONE
-                <span style={{
-                  fontSize: 9, padding: "1px 6px", borderRadius: 2,
-                  background: "rgba(255,152,0,0.12)", color: "#ff9800",
-                  border: "1px solid rgba(255,152,0,0.2)",
-                }}>{entryReady.length}</span>
-              </div>
-              {entryReady.map(s => (
-                <EPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />
-              ))}
+          {/* HVE entry-ready — highest priority, show first */}
+          {hveReady.length > 0 && (
+            <div style={{ marginBottom:20 }}>
+              <SectionHeader icon="🔁" label="HVE — AT RETEST LEVEL" count={hveReady.length} color="#ff9f43" />
+              {hveReady.map(s => <HVECard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
             </div>
           )}
 
-          {/* Watchlist */}
-          {watchlist.length > 0 && (
+          {/* EP entry-ready */}
+          {epReady.length > 0 && (
+            <div style={{ marginBottom:20 }}>
+              <SectionHeader icon="⚡" label="EP — IN ENTRY ZONE" count={epReady.length} color="#ff9800" />
+              {epReady.map(s => <EPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
+            </div>
+          )}
+
+          {/* HVE watching */}
+          {hveWatch.length > 0 && (
+            <div style={{ marginBottom:20 }}>
+              <SectionHeader icon="👁" label="HVE — WATCHING (not yet at level)" count={hveWatch.length} color="var(--text3)" />
+              {hveWatch.map(s => <HVECard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
+            </div>
+          )}
+
+          {/* EP watching */}
+          {epWatch.length > 0 && (
             <div>
-              <div style={{
-                fontSize: 10, fontWeight: 700, color: "var(--text3)",
-                letterSpacing: 1, marginBottom: 10,
-                display: "flex", alignItems: "center", gap: 8,
-              }}>
-                👁 WATCHING — NOT YET IN ENTRY ZONE
-                <span style={{
-                  fontSize: 9, padding: "1px 6px", borderRadius: 2,
-                  background: "var(--bg3)", color: "var(--text3)",
-                  border: "1px solid var(--border)",
-                }}>{watchlist.length}</span>
-              </div>
-              {watchlist.map(s => (
-                <EPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />
-              ))}
+              <SectionHeader icon="👁" label="EP — WATCHING (not yet in zone)" count={epWatch.length} color="var(--text3)" />
+              {epWatch.map(s => <EPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
             </div>
           )}
         </>
@@ -1684,153 +1098,139 @@ function EPTab({ data, onQuickAdd }) {
 function ShortsTab({ data }) {
   const { topShorts = [], market = {} } = data || {};
   const regimeMode = market?.mode;
+  const [sortKey, setSortKey] = React.useState("shortScore");
+  const [sortDir, setSortDir] = React.useState(-1);
 
-  const criteria = [
-    { label: "Price below MA10, MA21 & MA50", color: "var(--red)" },
-    { label: "Volume above average on down days", color: "var(--red)" },
-    { label: "Failed rally back to broken MA", color: "var(--red)" },
-    { label: "RS rank below 30 (relative weakness)", color: "var(--red)" },
-    { label: "Market in downtrend or distribution", color: "var(--orange)" },
-    { label: "Clear catalyst (earnings miss, downgrade)", color: "var(--orange)" },
-    { label: "Short score ≥ 60 for high conviction", color: "var(--orange)" },
-    { label: "Cover into panic/washout, not at target", color: "var(--yellow)" },
-    { label: "Stop just above broken MA level", color: "var(--yellow)" },
-    { label: "Target: 1:1 to 1.5:1 R (take profits fast)", color: "var(--yellow)" },
-  ];
+  const rows = [...topShorts].sort((a, b) => {
+    const av = a[sortKey] ?? (sortDir > 0 ? Infinity : -Infinity);
+    const bv = b[sortKey] ?? (sortDir > 0 ? Infinity : -Infinity);
+    return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
+  });
+
+  function Th({ label, k, align = "left", def = -1 }) {
+    const active = sortKey === k;
+    return (
+      <th onClick={() => { setSortKey(k); setSortDir(sortKey === k ? sortDir * -1 : def); }}
+        style={{ ...TH_STYLE, textAlign: align, color: active ? "var(--red)" : "var(--text3)" }}>
+        {label}{active ? (sortDir > 0 ? " ↑" : " ↓") : " ↕"}
+      </th>
+    );
+  }
 
   return (
     <div>
-      {/* Regime mode callout — prominent when system is routing to SHORTS */}
+      {/* Regime callout */}
       {regimeMode === "SHORTS" && (
-        <div style={{
-          marginBottom: 12, padding: "10px 14px", borderRadius: 4,
-          background: "rgba(242,54,69,0.07)", border: "1px solid rgba(242,54,69,0.3)",
-        }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#f23645", marginBottom: 4, letterSpacing: 0.5 }}>
+        <div style={{ marginBottom: 12, padding: "10px 14px", borderRadius: 4,
+          background: "rgba(242,54,69,0.07)", border: "1px solid rgba(242,54,69,0.3)" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#f23645", marginBottom: 4 }}>
             🔴 REGIME DANGER — SHORT CANDIDATES ACTIVE
           </div>
           <div style={{ fontSize: 10, color: "var(--text2)" }}>
-            Market score {market?.score}/100. System is in SHORTS ONLY mode.
-            No new long setups. Review open longs for exit. Size 25% on short entries.
+            Market score {market?.score}/100. SHORTS ONLY mode. Exit longs, size 25% on shorts.
           </div>
         </div>
       )}
       {regimeMode === "EXITS_ONLY" && (
-        <div style={{
-          marginBottom: 12, padding: "10px 14px", borderRadius: 4,
-          background: "rgba(255,152,0,0.07)", border: "1px solid rgba(255,152,0,0.3)",
-        }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#ff9800", marginBottom: 4, letterSpacing: 0.5 }}>
+        <div style={{ marginBottom: 12, padding: "10px 14px", borderRadius: 4,
+          background: "rgba(255,152,0,0.07)", border: "1px solid rgba(255,152,0,0.3)" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#ff9800", marginBottom: 4 }}>
             🟠 REGIME WARN — EXITS ONLY
           </div>
           <div style={{ fontSize: 10, color: "var(--text2)" }}>
-            Market score {market?.score}/100. No new longs. Manage existing positions: trail stops, take partial profits at targets.
+            Market score {market?.score}/100. No new longs. Trail stops, take partial profits.
           </div>
         </div>
       )}
-
       {market.label === "Positive" && regimeMode !== "SHORTS" && (
-        <div className="regime-warn">
-          ⚠ Market score {market.score}/100 POSITIVE — shorts face significant headwind. Only highest-conviction setups (score ≥ 80). Reduce size.
+        <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 3, fontSize: 10,
+          background: "rgba(255,152,0,0.06)", border: "1px solid rgba(255,152,0,0.2)",
+          color: "#ff9800" }}>
+          ⚠ Market POSITIVE — shorts face headwind. Highest conviction only (score ≥ 80), reduce size.
         </div>
       )}
 
-      <IntradayAlerts />
-      <TopPicksBar mode="short" />
-
-      <div className="criteria-box short-criteria">
-        <div className="criteria-title">Short Entry Criteria</div>
-        <div className="criteria-grid">
-          {criteria.map((c, i) => (
-            <div className="criteria-item" key={i}>
-              <div className="criteria-dot" style={{ background: c.color }} />
-              <span>{c.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="section-hdr">
-        <span className="section-title" style={{ color: "var(--red)" }}>Top Short Setups</span>
-        <span className="section-count">{topShorts.length} candidates</span>
-        <span style={{ fontSize: 9, color: "var(--text3)", marginLeft: 8 }}>
-          sorted by short score ↓
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: "var(--red)", letterSpacing: 1 }}>
+          ▼ SHORT SETUPS
         </span>
+        <span style={{ fontSize: 9, color: "var(--text3)" }}>{rows.length} candidates</span>
       </div>
 
-      <div className="bounce-grid">
-        {topShorts.map(s => (
-          <div className="short-card" key={s.ticker}>
-            <div className="short-card-top">
-              <span className="short-card-ticker">▼ <TVLink ticker={s.ticker}>{s.ticker} ↗</TVLink></span>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <ScoreBadge score={s.shortScore} />
-                <Pill value={s.chg} />
-              </div>
-            </div>
-
-            <div className="bounce-card-body" style={{ marginBottom: 6 }}>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">PRICE</span>
-                <span className="bounce-stat-val">{fmtPrice(s.price)}</span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">MA10</span>
-                <span className="bounce-stat-val" style={{ color: "var(--red)" }}>{fmtPrice(s.ma10)}</span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">MA21</span>
-                <span className="bounce-stat-val" style={{ color: "var(--red)" }}>{fmtPrice(s.ma21)}</span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">VOL RATIO</span>
-                <span className="bounce-stat-val" style={{ color: s.volRatio > 1.5 ? "var(--red)" : "var(--text)" }}>
-                  {s.volRatio}x
-                </span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label" title="Mansfield-weighted RS: 12M×0.4 + 9M×0.2 + 6M×0.2 + 3M×0.2 vs SPY">MANSFIELD RS</span>
-                <span className="bounce-stat-val" style={{ color: s.rs < 20 ? "var(--red)" : "var(--orange)" }}>
-                  {s.rs.toFixed(0)}
-                </span>
-              </div>
-              <div className="bounce-stat">
-                <span className="bounce-stat-label">DAYS BELOW</span>
-                <span className="bounce-stat-val">{s.daysBelow}d</span>
-              </div>
-            </div>
-
-            <div className="short-catalyst">
-              <div className="short-catalyst-item">
-                <span className="short-catalyst-label">CATALYST</span>
-                <span className="short-catalyst-val">{s.catalyst}</span>
-              </div>
-              <div className="short-catalyst-item">
-                <span className="short-catalyst-label">SETUP</span>
-                <span className="short-catalyst-val">{s.setupType}</span>
-              </div>
-              <div className="short-catalyst-item">
-                <span className="short-catalyst-label">FAILED RALLY</span>
-                <span className="short-catalyst-val" style={{ color: s.failedRally ? "var(--red)" : "var(--text3)" }}>
-                  {s.failedRally ? "YES ✓" : "NO"}
-                </span>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Short scoring legend */}
-      <div style={{ marginTop: 16, padding: "10px 14px", background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 2 }}>
-        <div className="criteria-title">Short Score Breakdown</div>
-        <div style={{ display: "flex", gap: 20, fontSize: 10, color: "var(--text2)" }}>
-          <span>RS &lt; 20 → +30 pts</span>
-          <span>Vol ratio &gt; 1.5x → +25 pts</span>
-          <span>Failed rally → +25 pts</span>
-          <span>Days below &gt; 5 → +20 pts</span>
-          <span style={{ color: "var(--red)" }}>≥80 HIGH · ≥60 MED · &lt;60 LOW</span>
+      {rows.length === 0 ? (
+        <div style={{ padding: 24, textAlign: "center", color: "var(--text3)", fontSize: 11,
+          background: "var(--bg2)", borderRadius: 6, border: "1px solid var(--border)" }}>
+          No short setups. Run a scan first.
         </div>
-      </div>
+      ) : (
+        <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 650 }}>
+            <thead>
+              <tr>
+                <Th label="Ticker"      k="ticker"     def={1} />
+                <Th label="Score"       k="shortScore" align="center" />
+                <Th label="RS"          k="rs"         align="center" />
+                <Th label="Price"       k="price"      />
+                <Th label="Chg"         k="chg"        align="center" />
+                <Th label="Vol Ratio"   k="volRatio"   align="center" />
+                <Th label="Days Below"  k="daysBelow"  align="center" />
+                <th style={{ ...TH_STYLE, cursor: "default" }}>Setup</th>
+                <th style={{ ...TH_STYLE, cursor: "default" }}>Catalyst</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(s => (
+                <tr key={s.ticker}
+                  onMouseEnter={e => e.currentTarget.style.background = "var(--bg2)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <td style={{ ...TD, fontWeight: 700 }}>
+                    <a href={tvUrl(s.ticker)} target="_blank" rel="noopener noreferrer"
+                      style={{ color: "var(--red)", textDecoration: "none" }}>
+                      ▼ {s.ticker}
+                    </a>
+                    {s.failedRally && (
+                      <span style={{ marginLeft: 6, fontSize: 8, fontWeight: 700, padding: "1px 4px",
+                        borderRadius: 2, background: "rgba(242,54,69,0.1)", color: "var(--red)",
+                        border: "1px solid rgba(242,54,69,0.3)" }}>FAILED RALLY</span>
+                    )}
+                  </td>
+                  <td style={{ ...TD, textAlign: "center" }}>
+                    <span style={{ fontWeight: 700, fontSize: 12,
+                      color: (s.shortScore||0) >= 80 ? "var(--red)" : (s.shortScore||0) >= 60 ? "var(--orange)" : "var(--text3)" }}>
+                      {s.shortScore != null ? s.shortScore.toFixed(0) : "—"}
+                    </span>
+                  </td>
+                  <td style={{ ...TD, textAlign: "center", fontWeight: 700,
+                    color: (s.rs||50) < 20 ? "var(--red)" : (s.rs||50) < 35 ? "var(--orange)" : "var(--text3)" }}>
+                    {s.rs != null ? s.rs.toFixed(0) : "—"}
+                  </td>
+                  <td style={{ ...TD, fontWeight: 600 }}>
+                    {s.price != null ? `$${Number(s.price).toFixed(2)}` : "—"}
+                  </td>
+                  <td style={{ ...TD, textAlign: "center", fontWeight: 600,
+                    color: (s.chg||0) < 0 ? "var(--red)" : (s.chg||0) > 0 ? "var(--green)" : "var(--text3)" }}>
+                    {s.chg != null ? `${s.chg > 0 ? "+" : ""}${s.chg.toFixed(1)}%` : "—"}
+                  </td>
+                  <td style={{ ...TD, textAlign: "center", fontWeight: 600,
+                    color: (s.volRatio||0) > 1.5 ? "var(--red)" : "var(--text3)" }}>
+                    {s.volRatio != null ? `${s.volRatio.toFixed(1)}×` : "—"}
+                  </td>
+                  <td style={{ ...TD, textAlign: "center", color: "var(--text3)" }}>
+                    {s.daysBelow != null ? `${s.daysBelow}d` : "—"}
+                  </td>
+                  <td style={{ ...TD, fontSize: 10, color: "var(--text3)" }}>
+                    {s.setupType || "—"}
+                  </td>
+                  <td style={{ ...TD, fontSize: 10, color: "var(--text3)" }}>
+                    {s.catalyst || "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -1876,172 +1276,145 @@ const THLS = {
 
 const MA_COLORS = { MA10: "var(--cyan)", MA21: "var(--purple)", MA50: "var(--yellow)" };
 
-function SignalRow({ s, expanded, onExpand, onQuickAdd }) {
+// ── Signal helpers ───────────────────────────────────────────────────────────
+
+function SignalRow({ s, onQuickAdd }) {
+  const [exp, setExp] = React.useState(false);
   const maLabel = s.bouncingFrom || s._ma || "—";
   const maC = MA_COLORS[maLabel] || "var(--text3)";
-  const base = "var(--bg)";
+
+  // Setup badge (HVE, EP, 3WT, etc.)
+  const badges = [];
+  if (s.hve_entry_ok)      badges.push({ label: "HVE↩", col: "#ff9f43" });
+  else if (s.hve_detected) badges.push({ label: "HVE?",  col: "#ffd89b" });
+  if (s.ep_entry_ok)       badges.push({ label: "EP✓",  col: "#00cec9" });
+  else if (s.ep_detected)  badges.push({ label: "EP?",   col: "#81ecec" });
+  if (s.threeWeeksTight)   badges.push({ label: "3WT",   col: "#a29bfe" });
+  if (s.coiling)           badges.push({ label: "⟳",    col: "#fd79a8" });
 
   return (
     <>
       <tr
-        onClick={onExpand}
-        style={{ background: expanded ? "rgba(41,98,255,0.05)" : base, cursor: "pointer" }}
-        onMouseEnter={e => e.currentTarget.style.background = "var(--bg2)"}
-        onMouseLeave={e => e.currentTarget.style.background = expanded ? "rgba(41,98,255,0.05)" : base}
+        onClick={() => setExp(e => !e)}
+        style={{ cursor: "pointer", background: exp ? "rgba(41,98,255,0.04)" : "transparent" }}
+        onMouseEnter={e  => { if (!exp) e.currentTarget.style.background = "var(--bg2)"; }}
+        onMouseLeave={e  => { e.currentTarget.style.background = exp ? "rgba(41,98,255,0.04)" : "transparent"; }}
       >
-        {/* MA badge */}
-        <td style={{ ...TDLS, textAlign: "center", width: 60 }}>
-          <span style={{
-            display: "inline-block", padding: "2px 7px", borderRadius: 3,
-            fontSize: 9, fontWeight: 700, letterSpacing: 0.5,
-            background: `${maC}18`, color: maC, border: `1px solid ${maC}40`,
-          }}>{maLabel}</span>
+        {/* MA */}
+        <td style={TD}>
+          <span style={{ display:"inline-block", padding:"2px 6px", borderRadius:3, fontSize:9,
+            fontWeight:700, background:`${maC}18`, color:maC, border:`1px solid ${maC}40` }}>
+            {maLabel}
+          </span>
         </td>
 
-        {/* Ticker */}
-        <td style={{ ...TDLS, fontWeight: 700 }}>
-          <a href={tvUrl(s.ticker)} target="_blank" rel="noopener noreferrer"
-            onClick={e => e.stopPropagation()}
-            style={{ color: "var(--accent)", textDecoration: "none" }}>
-            {s.ticker} <span style={{ fontSize: 8, opacity: 0.5 }}>↗</span>
-          </a>
+        {/* Ticker + badges */}
+        <td style={{ ...TD, fontWeight:700 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <a href={tvUrl(s.ticker)} target="_blank" rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              style={{ color:"var(--accent)", textDecoration:"none", fontSize:13 }}>
+              {s.ticker}
+            </a>
+            {badges.map(b => (
+              <span key={b.label} style={{ fontSize:8, fontWeight:700, padding:"1px 4px",
+                borderRadius:2, background:`${b.col}20`, color:b.col, border:`1px solid ${b.col}40` }}>
+                {b.label}
+              </span>
+            ))}
+          </div>
+          {s.sector && <div style={{ fontSize:9, color:"var(--text3)", marginTop:1 }}>{s.sector}</div>}
         </td>
 
         {/* RS */}
-        <td style={{ ...TDLS, textAlign: "center" }}>
-          <span style={{
-            display: "inline-block", padding: "3px 8px", borderRadius: 3,
-            fontWeight: 700, fontSize: 12, background: rsBgS(s.rs), color: rsColS(s.rs),
-            minWidth: 32, textAlign: "center",
-          }}>{s.rs}</span>
+        <td style={{ ...TD, textAlign:"center" }}>
+          <span style={{ display:"inline-block", padding:"2px 7px", borderRadius:3,
+            fontWeight:700, fontSize:12, background:rsBgS(s.rs), color:rsColS(s.rs),
+            minWidth:30, textAlign:"center" }}>{s.rs}</span>
         </td>
 
-        {/* Sector */}
-        <td style={{ ...TDLS, color: "var(--text3)", fontSize: 11 }}>
-          {s.sector || "—"}
-          {s.theme && THEME_STYLES[s.theme] && (
-            <span style={{
-              marginLeft: 4, fontSize: 8, fontWeight: 700,
-              padding: "1px 4px", borderRadius: 2,
-              background: THEME_STYLES[s.theme].bg,
-              color: THEME_STYLES[s.theme].color,
-              border: `1px solid ${THEME_STYLES[s.theme].border}`,
-              display: "inline-block",
-            }}>{THEME_STYLES[s.theme].label}</span>
+        {/* Price + chg */}
+        <td style={TD}>
+          <span style={{ fontWeight:600 }}>${s.price != null ? Number(s.price).toFixed(2) : "—"}</span>
+          {s.chg != null && (
+            <span style={{ fontSize:10, marginLeft:5,
+              color:(s.chg>0)?"var(--green)":(s.chg<0)?"var(--red)":"var(--text3)" }}>
+              {s.chg>0?"+":""}{s.chg.toFixed(1)}%
+            </span>
           )}
         </td>
 
-        {/* Price */}
-        <td style={{ ...TDLS, fontWeight: 600 }}>
-          ${s.price != null ? Number(s.price).toFixed(2) : "—"}
-        </td>
-
-        {/* CHG — sep */}
-        <td style={{ ...TDLS, fontWeight: 600, borderRight: "2px solid var(--border2)",
-          color: (s.chg||0) > 0 ? "var(--green)" : (s.chg||0) < 0 ? "var(--red)" : "var(--text3)" }}>
-          {s.chg != null ? `${s.chg > 0 ? "+" : ""}${s.chg.toFixed(1)}%` : "—"}
-        </td>
-
-        {/* Readiness */}
-        <td style={{ ...TDLS, textAlign: "center" }}>
-          <ReadinessBadge v={s.entry_readiness} />
-        </td>
-
-        {/* ADR % */}
-        <td style={{ ...TDLS, fontWeight: 700, textAlign: "center",
-          color: adrCol(s.adrPct), background: adrBg(s.adrPct) }}>
-          {s.adrPct != null ? `${s.adrPct.toFixed(1)}%` : "—"}
-        </td>
-
-        {/* EMA21L % */}
-        <td style={{ ...TDLS, fontWeight: 700, textAlign: "center",
-          color: e21Col(s.ema21LowPct), background: e21Bg(s.ema21LowPct) }}>
-          {s.ema21LowPct != null ? `${s.ema21LowPct.toFixed(1)}%` : "—"}
-        </td>
-
-        {/* 3WT — sep */}
-        <td style={{ ...TDLS, textAlign: "center", borderRight: "2px solid var(--border2)" }}>
-          {s.threeWeeksTight
-            ? <span style={{ color: "var(--green)", fontWeight: 700, fontSize: 14 }}>✦</span>
-            : <span style={{ color: "var(--border2)", fontSize: 10 }}>·</span>}
-        </td>
-
         {/* VCS */}
-        <td style={{ ...TDLS, fontWeight: 700, textAlign: "center", color: vcsColS(s.vcs) }}>
+        <td style={{ ...TD, textAlign:"center", fontWeight:700, color:vcsColS(s.vcs) }}>
           {s.vcs != null ? s.vcs.toFixed(1) : "—"}
         </td>
 
-        {/* Stop */}
-        <td style={{ ...TDLS, color: "var(--red)", fontWeight: 600 }}>
-          {s.stop_price != null ? `$${Number(s.stop_price).toFixed(2)}` : "—"}
+        {/* ADR */}
+        <td style={{ ...TD, textAlign:"center", fontWeight:700,
+          color:adrCol(s.adrPct), background:adrBg(s.adrPct) }}>
+          {s.adrPct != null ? `${s.adrPct.toFixed(1)}%` : "—"}
         </td>
 
-        {/* T1 */}
-        <td style={{ ...TDLS, color: "var(--green)", fontWeight: 600 }}>
-          {s.target_1 != null ? `$${Number(s.target_1).toFixed(2)}` : "—"}
+        {/* Stop / Target */}
+        <td style={{ ...TD, fontSize:11 }}>
+          {s.stop_price != null && (
+            <span style={{ color:"var(--red)", fontWeight:600 }}>${Number(s.stop_price).toFixed(2)}</span>
+          )}
+          {s.target_1 != null && (
+            <span style={{ color:"var(--green)", fontWeight:600, marginLeft:6 }}>→${Number(s.target_1).toFixed(2)}</span>
+          )}
         </td>
 
         {/* Score */}
-        <td style={{ ...TDLS, fontWeight: 700, textAlign: "center", color: scoreColS(s.signal_score || 0) }}>
+        <td style={{ ...TD, textAlign:"center", fontWeight:700, color:scoreColS(s.signal_score||0) }}>
           {s.signal_score != null ? s.signal_score.toFixed(1) : "—"}
         </td>
 
-        {/* Log — stop propagation */}
-        <td style={{ ...TDLS, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+        {/* Log */}
+        <td style={{ ...TD, textAlign:"center" }} onClick={e => e.stopPropagation()}>
           {onQuickAdd && (
-            <button onClick={() => onQuickAdd({ ...s, signal_type: maLabel })} style={{
-              padding: "2px 8px", fontSize: 9, cursor: "pointer", borderRadius: 3,
-              border: "1px solid var(--accent)", background: "transparent",
-              color: "var(--accent)", fontFamily: "inherit",
-            }}>+ Log</button>
+            <button onClick={() => onQuickAdd({ ...s, signal_type: maLabel })}
+              style={{ padding:"2px 7px", fontSize:9, cursor:"pointer", borderRadius:3,
+                border:"1px solid var(--accent)", background:"transparent",
+                color:"var(--accent)", fontFamily:"inherit" }}>+ Log</button>
           )}
         </td>
       </tr>
 
-      {/* Expanded */}
-      {expanded && (
-        <tr style={{ background: "rgba(41,98,255,0.03)" }}>
-          <td colSpan={14} style={{ padding: "10px 16px 12px", borderBottom: "1px solid var(--border)" }}>
-            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", fontSize: 11, alignItems: "center" }}>
+      {/* Inline expand — just key extra numbers, no chart */}
+      {exp && (
+        <tr style={{ background:"rgba(41,98,255,0.02)" }}>
+          <td colSpan={9} style={{ padding:"6px 14px 8px", borderBottom:"1px solid var(--border)" }}>
+            <div style={{ display:"flex", gap:14, flexWrap:"wrap", fontSize:11, alignItems:"center" }}>
               {[
-                ["MA21",      s.ma21],
-                ["MA50",      s.ma50],
-                ["EMA21 LOW", s.ema21Low],
-                ["ATR",       s.atr ? `$${Number(s.atr).toFixed(2)}` : null],
-                ["T2",        s.target_2],
-                ["T3",        s.target_3],
-              ].map(([l, v]) => v != null && (
+                ["MA21",      s.ma21     != null && `$${Number(s.ma21).toFixed(2)}`],
+                ["MA50",      s.ma50     != null && `$${Number(s.ma50).toFixed(2)}`],
+                ["EMA21 LOW", s.ema21Low != null && `$${Number(s.ema21Low).toFixed(2)}`],
+                ["ATR",       s.atr      != null && `$${Number(s.atr).toFixed(2)}`],
+                ["EMA21L %",  s.ema21LowPct != null && `${s.ema21LowPct.toFixed(1)}%`],
+                ["T2",        s.target_2 != null && `$${Number(s.target_2).toFixed(2)}`],
+                ["T3",        s.target_3 != null && `$${Number(s.target_3).toFixed(2)}`],
+              ].filter(([,v]) => v).map(([l,v]) => (
                 <div key={l}>
-                  <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, marginRight: 4 }}>{l}</span>
-                  <span style={{ fontWeight: 600, color: l === "EMA21 LOW" ? "var(--green)" : l.startsWith("T") ? "var(--green)" : "var(--text)" }}>
-                    {l === "ATR" ? v : `$${Number(v).toFixed(2)}`}
-                  </span>
+                  <span style={{ fontSize:8, color:"var(--text3)", letterSpacing:1, marginRight:3 }}>{l}</span>
+                  <span style={{ fontWeight:600,
+                    color: l.startsWith("T") ? "var(--green)" : l === "EMA21L %" ? e21Col(s.ema21LowPct) : "var(--text)" }}>{v}</span>
                 </div>
               ))}
-              {s.ema21LowPct != null && (
-                <span style={{ padding: "2px 10px", borderRadius: 3, fontSize: 9, fontWeight: 700,
-                  background: e21Bg(s.ema21LowPct), color: e21Col(s.ema21LowPct),
-                  border: `1px solid ${e21Col(s.ema21LowPct)}40` }}>
-                  {s.ema21LowPct.toFixed(1)}% to EMA21 Low —
-                  {s.ema21LowPct < 5 ? " LOW RISK ✓" : s.ema21LowPct <= 8 ? " MODERATE" : " TOO WIDE — SKIP"}
-                </span>
-              )}
-              {s.threeWeeksTight && (
-                <span style={{ padding: "2px 10px", borderRadius: 3, fontSize: 9, fontWeight: 700,
-                  background: "rgba(8,153,129,0.12)", color: "var(--green)", border: "1px solid rgba(8,153,129,0.3)" }}>
-                  ✦ 3-WEEKS TIGHT
-                </span>
-              )}
-              {s.coiling && (
-                <span style={{ padding: "2px 10px", borderRadius: 3, fontSize: 9, fontWeight: 700,
-                  background: "rgba(124,77,255,0.1)", color: "var(--purple)", border: "1px solid rgba(124,77,255,0.3)" }}>
-                  ⟳ COILING
-                </span>
-              )}
               {s.setupTag && (
-                <span style={{ padding: "2px 10px", borderRadius: 3, fontSize: 9, fontWeight: 700,
-                  background: "rgba(245,166,35,0.1)", color: "var(--yellow)", border: "1px solid rgba(245,166,35,0.3)" }}>
+                <span style={{ padding:"1px 7px", borderRadius:3, fontSize:9, fontWeight:700,
+                  background:"rgba(245,166,35,0.1)", color:"var(--yellow)", border:"1px solid rgba(245,166,35,0.3)" }}>
                   {s.setupTag}
+                </span>
+              )}
+              {s.hve_detected && (
+                <span style={{ fontSize:9, color:"#ff9f43" }}>
+                  HVE gap {s.hve_gap_pct}% · {s.hve_days_since_gap}d ago · support ${s.hve_support_level} · tested {s.hve_test_count}×
+                </span>
+              )}
+              {s.ep_detected && (
+                <span style={{ fontSize:9, color:"#00cec9" }}>
+                  EP gap {s.ep_gap_pct}% · {s.ep_days_ago}d ago · vol {s.ep_vol_ratio}×
                 </span>
               )}
             </div>
@@ -2052,118 +1425,100 @@ function SignalRow({ s, expanded, onExpand, onQuickAdd }) {
   );
 }
 
+const TD = { padding:"6px 10px", borderBottom:"1px solid var(--border)", whiteSpace:"nowrap", fontSize:12 };
+const TH_STYLE = {
+  padding:"5px 10px", borderBottom:"2px solid var(--border)", fontSize:9,
+  letterSpacing:1, textTransform:"uppercase", color:"var(--text3)", fontWeight:700,
+  whiteSpace:"nowrap", background:"var(--bg2)", cursor:"pointer", userSelect:"none",
+};
+
 function SignalTable({ ma10, ma21, ma50, onQuickAdd }) {
-  const [sortKey,  setSortKey]  = React.useState("signal_score");
-  const [sortDir,  setSortDir]  = React.useState(-1);
-  const [expanded, setExpanded] = React.useState(null);
+  const [sortKey, setSortKey] = React.useState("signal_score");
+  const [sortDir, setSortDir] = React.useState(-1);
   const [maFilter, setMaFilter] = React.useState("all");
 
   const allSignals = [
-    ...ma10.map(s => ({ ...s, _ma: "MA10" })),
-    ...ma21.map(s => ({ ...s, _ma: "MA21" })),
-    ...ma50.map(s => ({ ...s, _ma: "MA50" })),
+    ...ma10.map(s => ({ ...s, _ma:"MA10" })),
+    ...ma21.map(s => ({ ...s, _ma:"MA21" })),
+    ...ma50.map(s => ({ ...s, _ma:"MA50" })),
   ];
 
-  let rows = maFilter === "all"
-    ? allSignals
-    : maFilter.startsWith("theme_")
-      ? allSignals.filter(s => s.theme === maFilter.replace("theme_", ""))
-      : allSignals.filter(s => s._ma === maFilter);
-  rows = [...rows].sort((a, b) => {
+  let rows = maFilter === "all" ? allSignals : allSignals.filter(s => s._ma === maFilter);
+  rows = [...rows].sort((a,b) => {
     const av = a[sortKey] ?? (sortDir > 0 ? Infinity : -Infinity);
     const bv = b[sortKey] ?? (sortDir > 0 ? Infinity : -Infinity);
     return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
   });
 
-  function thClick(k, def = -1) { setSortKey(k); setSortDir(sortKey === k ? sortDir * -1 : def); }
-
-  function Th({ label, k, align = "left", title = "", def = -1, sep = false }) {
+  function Th({ label, k, align="left", def=-1 }) {
     const active = sortKey === k;
     return (
-      <th title={title} onClick={() => thClick(k, def)}
-        style={{ ...THLS, textAlign: align, borderRight: sep ? "2px solid var(--border2)" : undefined,
-          color: active ? "var(--accent)" : "var(--text3)" }}>
-        {label}{active ? (sortDir > 0 ? " ↑" : " ↓") : " ↕"}
+      <th onClick={() => { setSortKey(k); setSortDir(sortKey===k ? sortDir*-1 : def); }}
+        style={{ ...TH_STYLE, textAlign:align, color:active?"var(--accent)":"var(--text3)" }}>
+        {label}{active ? (sortDir>0?" ↑":" ↓") : " ↕"}
       </th>
     );
   }
 
+  const hveCount = allSignals.filter(s => s.hve_detected).length;
+  const epCount  = allSignals.filter(s => s.ep_detected).length;
+
   return (
     <div>
       {/* Filter bar */}
-      <div style={{ display: "flex", gap: 5, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ display:"flex", gap:5, marginBottom:10, flexWrap:"wrap", alignItems:"center" }}>
         {[
-          ["all",  `All  ${allSignals.length}`],
-          ["MA10", `MA10  ${ma10.length}`],
-          ["MA21", `MA21  ${ma21.length}`],
-          ["MA50", `MA50  ${ma50.length}`],
-        ].map(([v, l]) => (
-          <button key={v} onClick={() => setMaFilter(v)} style={{
-            padding: "3px 10px", fontSize: 9, textTransform: "uppercase", cursor: "pointer",
-            borderRadius: 3, fontFamily: "inherit", letterSpacing: 0.5,
-            border: `1px solid ${maFilter === v ? (MA_COLORS[v] || "var(--accent)") : "var(--border)"}`,
-            background: maFilter === v ? `${(MA_COLORS[v] || "var(--accent)")}18` : "transparent",
-            color: maFilter === v ? (MA_COLORS[v] || "var(--accent)") : "var(--text3)",
-          }}>{l}</button>
-        ))}
-        <span style={{ width: 1, background: "var(--border)", height: 16, margin: "0 4px" }} />
-        {/* Theme quick-filter pills */}
-        {[...new Set([...ma10, ...ma21, ...ma50].map(s => s.theme).filter(Boolean))].sort().map(theme => {
-          const st = THEME_STYLES[theme];
-          if (!st) return null;
-          const active = maFilter === "theme_" + theme;
+          ["all",  `All · ${allSignals.length}`],
+          ["MA10", `MA10 · ${ma10.length}`],
+          ["MA21", `MA21 · ${ma21.length}`],
+          ["MA50", `MA50 · ${ma50.length}`],
+        ].map(([v,l]) => {
+          const c = v === "all" ? "var(--accent)" : (MA_COLORS[v] || "var(--accent)");
+          const active = maFilter === v;
           return (
-            <button key={theme} onClick={() => setMaFilter(active ? "all" : "theme_" + theme)} style={{
-              padding: "3px 8px", fontSize: 8, cursor: "pointer", borderRadius: 3,
-              fontFamily: "inherit", letterSpacing: 0.3, fontWeight: 700,
-              border: `1px solid ${active ? st.color : st.border}`,
-              background: active ? st.bg : "transparent",
-              color: active ? st.color : "var(--text3)",
-            }}>{st.label}</button>
+            <button key={v} onClick={() => setMaFilter(v)} style={{
+              padding:"3px 10px", fontSize:9, textTransform:"uppercase", cursor:"pointer",
+              borderRadius:3, fontFamily:"inherit", letterSpacing:0.5,
+              border:`1px solid ${active ? c : "var(--border)"}`,
+              background: active ? `${c}18` : "transparent",
+              color: active ? c : "var(--text3)",
+            }}>{l}</button>
           );
         })}
-        <span style={{ marginLeft: "auto", fontSize: 9, color: "var(--text3)" }}>
-          ADR 3.5–8% · EMA21L &lt;5% low risk · &gt;8% skip · ✦ 3-Wk Tight · click row to expand
+        {hveCount > 0 && (
+          <span style={{ fontSize:9, color:"#ff9f43", marginLeft:4 }}>
+            {hveCount} HVE retest{hveCount>1?"s":""}
+          </span>
+        )}
+        {epCount > 0 && (
+          <span style={{ fontSize:9, color:"#00cec9", marginLeft:4 }}>
+            {epCount} EP setup{epCount>1?"s":""}
+          </span>
+        )}
+        <span style={{ marginLeft:"auto", fontSize:9, color:"var(--text3)" }}>
+          click row to expand · {rows.length} signals
         </span>
       </div>
 
       {rows.length === 0 ? (
-        <div style={{ padding: 24, color: "var(--text3)", textAlign: "center", fontSize: 12,
-          background: "var(--bg2)", borderRadius: 6, border: "1px solid var(--border)" }}>
+        <div style={{ padding:24, color:"var(--text3)", textAlign:"center", fontSize:12,
+          background:"var(--bg2)", borderRadius:6, border:"1px solid var(--border)" }}>
           No signals. Run a scan first.
         </div>
       ) : (
-        <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 860 }}>
+        <div style={{ overflowX:"auto", border:"1px solid var(--border)", borderRadius:6 }}>
+          <table style={{ borderCollapse:"collapse", width:"100%", minWidth:700 }}>
             <thead>
-              <tr style={{ background: "var(--bg3)" }}>
-                <th colSpan={7} style={{ ...THLS, fontSize: 8, textAlign: "center",
-                  borderRight: "2px solid var(--border2)", letterSpacing: 2 }}>SIGNAL</th>
-                <th colSpan={3} style={{ ...THLS, fontSize: 8, textAlign: "center", color: "var(--accent)",
-                  borderRight: "2px solid var(--border2)", letterSpacing: 2 }}>CORE STATS</th>
-                <th colSpan={4} style={{ ...THLS, fontSize: 8, textAlign: "center", letterSpacing: 2 }}>TRADE</th>
-              </tr>
               <tr>
-                <th style={{ ...THLS, width: 60, cursor: "default" }}>MA</th>
-                <Th label="TICKER" k="ticker"       def={1}  />
-                <Th label="RS"     k="rs"            align="center" def={-1} />
-                <Th label="SECTOR" k="sector"        def={1}  />
-                <Th label="PRICE"  k="price"         def={-1} />
-                <Th label="CHG"    k="chg"           def={-1} sep={true} />
-                <Th label="READY"  k="signal_score"  align="center" def={-1}
-                  title="Entry Readiness 1–5" />
-                <Th label="ADR %"  k="adrPct"        align="center" def={1}
-                  title="Avg Daily Range % — ideal 3.5–8%" />
-                <Th label="EMA21L %" k="ema21LowPct" align="center" def={1}
-                  title="Distance to EMA21 Low — <5% low risk, >8% skip" />
-                <th style={{ ...THLS, textAlign: "center", cursor: "default",
-                  borderRight: "2px solid var(--border2)" }}>3WT</th>
-                <Th label="VCS"   k="vcs"          align="center" def={1}
-                  title="Volatility Contraction Score — lower is tighter" />
-                <Th label="STOP"  k="stop_price"   def={1}  />
-                <Th label="T1"    k="target_1"     def={-1} />
-                <Th label="SCORE" k="signal_score" align="center" def={-1} />
-                <th style={{ ...THLS, cursor: "default" }}>LOG</th>
+                <th style={{ ...TH_STYLE, width:55, cursor:"default" }}>MA</th>
+                <Th label="Ticker"  k="ticker"       def={1}  />
+                <Th label="RS"      k="rs"            align="center" />
+                <Th label="Price"   k="price"         />
+                <Th label="VCS"     k="vcs"           align="center" def={1} />
+                <Th label="ADR %"   k="adrPct"        align="center" def={1} />
+                <th style={{ ...TH_STYLE, cursor:"default" }}>Stop → T1</th>
+                <Th label="Score"   k="signal_score"  align="center" />
+                <th style={{ ...TH_STYLE, cursor:"default" }}>Log</th>
               </tr>
             </thead>
             <tbody>
@@ -2171,8 +1526,6 @@ function SignalTable({ ma10, ma21, ma50, onQuickAdd }) {
                 <SignalRow
                   key={`${s.ticker}-${s._ma}`}
                   s={s}
-                  expanded={expanded === `${s.ticker}-${s._ma}`}
-                  onExpand={() => setExpanded(expanded === `${s.ticker}-${s._ma}` ? null : `${s.ticker}-${s._ma}`)}
                   onQuickAdd={onQuickAdd}
                 />
               ))}
@@ -2184,320 +1537,78 @@ function SignalTable({ ma10, ma21, ma50, onQuickAdd }) {
   );
 }
 
-
-// ── TopPicksBar ────────────────────────────────────────────────────────────
-
-function TopPicksBar({ onQuickAdd, mode = 'long' }) {
-  const [picks, setPicks]   = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch("/api/top-picks?max_take=2")
-      .then(r => r.json())
-      .then(d => {
-        // New response has longs{} and shorts{} keys
-        const section = mode === "short" ? d.shorts : d.longs;
-        setPicks(section || d);  // fallback for backward compat
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [mode]);
-
-  if (loading) return null;
-  if (!picks || !picks.take?.length) return null;
-
-  const isShort = mode === "short";
-  const tierStyle = (tier) => (isShort ? {
-    TAKE:    { bg: "rgba(255,51,102,0.07)", border: "rgba(255,51,102,0.4)",  label: "🔴 TAKE SHORT",  dot: "#ff3366" },
-    WATCH:   { bg: "rgba(255,140,0,0.06)",  border: "rgba(255,140,0,0.35)",  label: "🟠 WATCH SHORT", dot: "#ff8c00" },
-    MONITOR: { bg: "rgba(90,120,150,0.05)", border: "rgba(90,120,150,0.2)",  label: "📋 MONITOR",     dot: "#5a7896" },
-  } : {
-    TAKE:    { bg: "rgba(0,245,160,0.07)", border: "rgba(0,245,160,0.4)",  label: "✅ TAKE",    dot: "#00f5a0" },
-    WATCH:   { bg: "rgba(0,200,255,0.06)", border: "rgba(0,200,255,0.35)", label: "👀 WATCH",   dot: "#00c8ff" },
-    MONITOR: { bg: "rgba(90,120,150,0.05)", border: "rgba(90,120,150,0.2)", label: "📋 MONITOR", dot: "#5a7896" },
-  })[tier] || {};
-
-  const ScoreBar = ({ score }) => {
-    const pct = Math.min(100, score);
-    const col = pct >= 60 ? "#00f5a0" : pct >= 40 ? "#f5c400" : "#ff3366";
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-        <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 1 }}>
-          <div style={{ width: `${pct}%`, height: "100%", background: col, borderRadius: 1, transition: "width 0.5s" }} />
-        </div>
-        <span style={{ fontFamily: "monospace", fontSize: 9, color: col, minWidth: 28 }}>{score}</span>
-      </div>
-    );
-  };
-
-  const allActional = [...(picks.take || []), ...(picks.watch || [])];
-  const monitor     = picks.monitor || [];
-
-  return (
-    <div style={{ marginBottom: 14 }}>
-
-      {/* Header */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        marginBottom: 8,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{
-            fontFamily: "monospace", fontSize: 11, letterSpacing: 2,
-            color: isShort ? "#ff3366" : "#00f5a0", textTransform: "uppercase", fontWeight: 700,
-          }}>
-            {isShort ? "🔴 Priority Shorts" : "🎯 Priority Picks"}
-          </span>
-          <span style={{ fontSize: 9, color: "var(--text3)" }}>
-            {picks.summary?.total} signals ranked · act on TAKE first
-          </span>
-        </div>
-        {monitor.length > 0 && (
-          <span style={{ fontSize: 9, color: "var(--text3)" }}>
-            +{monitor.length} monitoring
-          </span>
-        )}
-      </div>
-
-      {/* TAKE + WATCH cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 8 }}>
-        {allActional.map((s, i) => {
-          const tier = s.priority_tier;
-          const ts   = tierStyle(tier);
-          const bd   = s.priority_breakdown || {};
-          return (
-            <div key={i} style={{
-              background: ts.bg,
-              border: `1px solid ${ts.border}`,
-              borderRadius: 4,
-              padding: "12px 14px",
-              position: "relative",
-            }}>
-              {/* Tier badge */}
-              <div style={{
-                position: "absolute", top: 10, right: 12,
-                fontSize: 9, fontWeight: 700, letterSpacing: 1,
-                color: ts.dot, fontFamily: "monospace",
-              }}>{ts.label}</div>
-
-              {/* Ticker + price */}
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 18, fontWeight: 800, color: "var(--text)", fontFamily: "monospace" }}>
-                  {s.ticker}
-                </span>
-                <span style={{ fontSize: 11, color: "var(--text2)" }}>
-                  ${s.price?.toFixed(2)}
-                </span>
-                <span style={{ fontSize: 9, color: "var(--text3)" }}>
-                  {s.bouncing_from || s.signal_type}
-                </span>
-              </div>
-
-              {/* Priority score bar */}
-              <ScoreBar score={s.priority_score || 0} />
-
-              {/* Reason */}
-              <div style={{ fontSize: 10, color: "var(--text2)", marginTop: 6, lineHeight: 1.6 }}>
-                {s.priority_reason}
-              </div>
-
-              {/* Key stats row */}
-              <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
-                {[
-                  { l: "VCS",  v: s.vcs?.toFixed(1),                     hi: s.vcs <= 3 },
-                  { l: "RS",   v: s.rs,                                   hi: s.rs >= 85 },
-                  { l: "Vol",  v: s.vol_ratio ? `${s.vol_ratio.toFixed(1)}×` : "—", hi: s.vol_ratio >= 1.5 },
-                  { l: "Stop", v: s.stop_price ? `$${s.stop_price.toFixed(2)}` : "—", hi: false },
-                  { l: "T1",   v: s.target_1   ? `$${s.target_1.toFixed(2)}` : "—",   hi: true  },
-                ].map(({ l, v, hi }) => (
-                  <div key={l} style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>{l}</div>
-                    <div style={{
-                      fontFamily: "monospace", fontSize: 11, fontWeight: 700,
-                      color: hi ? ts.dot : "var(--text)",
-                    }}>{v ?? "—"}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Score breakdown mini-bar */}
-              <div style={{ display: "flex", gap: 3, marginTop: 8 }}>
-                {[
-                  { l: "VCS",  v: bd.vcs_score,  max: 30, c: "#00f5a0" },
-                  { l: "Prox", v: bd.prox_score, max: 25, c: "#00c8ff" },
-                  { l: "Vol",  v: bd.vol_score,  max: 20, c: "#f5c400" },
-                  { l: "Sect", v: bd.sect_score, max: 15, c: "#a855f7" },
-                  { l: "RS",   v: bd.rs_score,   max: 10, c: "#ff8c00" },
-                ].map(({ l, v, max, c }) => (
-                  <div key={l} style={{ flex: 1, textAlign: "center" }}>
-                    <div style={{ height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 1, marginBottom: 2 }}>
-                      <div style={{ width: `${Math.min(100, (v||0)/max*100)}%`, height: "100%", background: c, borderRadius: 1 }} />
-                    </div>
-                    <div style={{ fontSize: 7, color: "var(--text3)", letterSpacing: 0.5 }}>{l}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Quick add */}
-              {onQuickAdd && (
-                <button
-                  onClick={() => onQuickAdd(s)}
-                  style={{
-                    marginTop: 10, width: "100%", padding: "5px 0",
-                    background: `${ts.dot}18`, border: `1px solid ${ts.border}`,
-                    color: ts.dot, borderRadius: 2, cursor: "pointer",
-                    fontSize: 9, letterSpacing: 1, fontFamily: "monospace", fontWeight: 700,
-                  }}
-                >
-                  + ADD TO JOURNAL
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Monitor strip */}
-      {monitor.length > 0 && (
-        <div style={{
-          marginTop: 8, padding: "8px 12px",
-          background: "rgba(90,120,150,0.04)",
-          border: "1px solid rgba(90,120,150,0.15)",
-          borderRadius: 3,
-          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-        }}>
-          <span style={{ fontSize: 9, color: "var(--text3)", letterSpacing: 1, fontWeight: 700 }}>
-            📋 MONITOR — review, don't act yet:
-          </span>
-          {monitor.slice(0, 10).map((s, i) => (
-            <span key={i} style={{
-              fontSize: 10, fontFamily: "monospace", fontWeight: 700,
-              color: "var(--text2)",
-              padding: "1px 6px", background: "rgba(255,255,255,0.03)",
-              border: "1px solid rgba(255,255,255,0.06)", borderRadius: 2,
-            }}>
-              {s.ticker}
-              <span style={{ fontSize: 8, color: "var(--text3)", marginLeft: 4 }}>
-                {s.priority_score}
-              </span>
-            </span>
-          ))}
-          {monitor.length > 10 && (
-            <span style={{ fontSize: 9, color: "var(--text3)" }}>+{monitor.length - 10} more</span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-// ── IntradayAlerts ─────────────────────────────────────────────────────────
-
-function IntradayAlerts() {
-  const [alerts, setAlerts] = useState([]);
-  const [lastCheck, setLastCheck] = useState(null);
-
-  const fetchAlerts = () => {
-    fetch("/api/intraday-ma/alerts")
-      .then(r => r.json())
-      .then(d => {
-        setAlerts(d.alerts || []);
-        setLastCheck(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }));
-      })
-      .catch(() => {});
-  };
-
-  useEffect(() => {
-    fetchAlerts();
-    const interval = setInterval(fetchAlerts, 5 * 60 * 1000); // refresh every 5 min
-    return () => clearInterval(interval);
-  }, []);
-
-  if (!alerts.length) return null;
-
-  return (
-    <div style={{
-      marginBottom: 12, padding: "10px 14px",
-      background: "rgba(255,152,0,0.05)",
-      border: "1px solid rgba(255,152,0,0.3)",
-      borderRadius: 3,
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#ff9800", fontFamily: "monospace", letterSpacing: 1 }}>
-          ⚡ INTRADAY ALERTS TODAY
-        </span>
-        <span style={{ fontSize: 9, color: "var(--text3)" }}>
-          {alerts.length} triggered · checked {lastCheck}
-        </span>
-      </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {alerts.map((a, i) => {
-          const [ticker, ma] = a.split(":");
-          const isShort = ma?.includes("SHORT");
-          return (
-            <div key={i} style={{
-              padding: "3px 10px",
-              background: isShort ? "rgba(255,51,102,0.08)" : "rgba(255,152,0,0.08)",
-              border: `1px solid ${isShort ? "rgba(255,51,102,0.3)" : "rgba(255,152,0,0.3)"}`,
-              borderRadius: 2,
-              display: "flex", alignItems: "center", gap: 6,
-            }}>
-              <span style={{ fontFamily: "monospace", fontWeight: 700, fontSize: 11, color: "var(--text)" }}>
-                {ticker}
-              </span>
-              <span style={{ fontSize: 9, color: "#ff9800", fontFamily: "monospace" }}>
-                {ma}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+// Kept for backward-compat references but stripped down — no extra fetch
+function TopPicksBar() { return null; }
+function IntradayAlerts() { return null; }
 
 function LongsTab({ data, onQuickAdd }) {
-  const { ma10Bounces = [], ma21Bounces = [], ma50Bounces = [], longStocks = [], market = {} } = data || {};
-
-  const longCriteria = [
-    { label: "MA21: within 2% above OR up to 1.5% below — VCP dip under MA21 is valid", color: "var(--cyan)" },
-    { label: "MA10: price above and within 1.5% — tighter faster signal", color: "var(--cyan)" },
-    { label: "MA50: price must be above — dipping below MA50 is a red flag", color: "var(--cyan)" },
-    { label: "VCS ≤ 5 required — volatility contraction is the primary qualifier", color: "var(--green)" },
-    { label: "Volume above average on bounce day (≥1.2x)", color: "var(--green)" },
-    { label: "Mansfield RS above 80 — weighted 12M/9M/6M/3M vs SPY (recent periods count more)", color: "var(--green)" },
-    { label: "Market in uptrend (conditions ≥ 50%)", color: "var(--green)" },
-    { label: "Stock above all 3 MAs = tier 1 setup (highest conviction)", color: "var(--green)" },
-    { label: "VCS tightening before bounce (coiled)", color: "var(--yellow)" },
-    { label: "Stop just below the MA being tested", color: "var(--orange)" },
-    { label: "Target: 2:1 R minimum, hold in uptrend", color: "var(--orange)" },
+  const { ma10Bounces = [], ma21Bounces = [], ma50Bounces = [] } = data || {};
+  const allLongs = [
+    ...ma10Bounces.map(s => ({ ...s, _ma:"MA10" })),
+    ...ma21Bounces.map(s => ({ ...s, _ma:"MA21" })),
+    ...ma50Bounces.map(s => ({ ...s, _ma:"MA50" })),
   ];
+  const hveReady  = allLongs.filter(s => s.hve_entry_ok);
+  const epReady   = allLongs.filter(s => s.ep_entry_ok);
+  const topByScore = [...allLongs].sort((a,b) => (b.signal_score||0)-(a.signal_score||0)).slice(0,5);
 
   return (
     <div>
-      <IntradayAlerts />
-      <TopPicksBar onQuickAdd={onQuickAdd} />
       <RegimeGate compact={true} />
 
-      <div className="criteria-box">
-        <div className="criteria-title">Long Entry Criteria</div>
-        <div className="criteria-grid">
-          {longCriteria.map((c, i) => (
-            <div className="criteria-item" key={i}>
-              <div className="criteria-dot" style={{ background: c.color }} />
-              <span>{c.label}</span>
-            </div>
+      {/* Focus strip — top picks at a glance */}
+      {(hveReady.length > 0 || epReady.length > 0 || topByScore.length > 0) && (
+        <div style={{ display:"flex", gap:6, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
+          <span style={{ fontSize:9, color:"var(--text3)", letterSpacing:1, textTransform:"uppercase",
+            marginRight:4, alignSelf:"center" }}>Focus →</span>
+
+          {/* HVE retest first — highest conviction */}
+          {hveReady.map(s => (
+            <a key={"hve"+s.ticker} href={tvUrl(s.ticker)} target="_blank" rel="noopener noreferrer"
+              style={{ textDecoration:"none" }}>
+              <span style={{ padding:"3px 9px", borderRadius:3, fontSize:10, fontWeight:700,
+                background:"rgba(255,159,67,0.15)", color:"#ff9f43",
+                border:"1px solid rgba(255,159,67,0.5)", cursor:"pointer" }}>
+                {s.ticker} <span style={{ fontSize:8, opacity:0.7 }}>HVE↩</span>
+              </span>
+            </a>
+          ))}
+
+          {/* EP entry ready */}
+          {epReady.map(s => (
+            <a key={"ep"+s.ticker} href={tvUrl(s.ticker)} target="_blank" rel="noopener noreferrer"
+              style={{ textDecoration:"none" }}>
+              <span style={{ padding:"3px 9px", borderRadius:3, fontSize:10, fontWeight:700,
+                background:"rgba(0,206,201,0.12)", color:"#00cec9",
+                border:"1px solid rgba(0,206,201,0.4)", cursor:"pointer" }}>
+                {s.ticker} <span style={{ fontSize:8, opacity:0.7 }}>EP✓</span>
+              </span>
+            </a>
+          ))}
+
+          {/* Top 5 by score (deduped from above) */}
+          {topByScore
+            .filter(s => !hveReady.find(x=>x.ticker===s.ticker) && !epReady.find(x=>x.ticker===s.ticker))
+            .slice(0,5)
+            .map(s => (
+              <a key={"top"+s.ticker} href={tvUrl(s.ticker)} target="_blank" rel="noopener noreferrer"
+                style={{ textDecoration:"none" }}>
+                <span style={{ padding:"3px 9px", borderRadius:3, fontSize:10, fontWeight:700,
+                  background:"rgba(41,98,255,0.1)", color:"var(--accent)",
+                  border:"1px solid rgba(41,98,255,0.3)", cursor:"pointer" }}>
+                  {s.ticker}
+                  <span style={{ fontSize:8, opacity:0.6, marginLeft:4 }}>{s.signal_score?.toFixed(1)}</span>
+                </span>
+              </a>
           ))}
         </div>
-      </div>
-
-
+      )}
 
       <SignalTable ma10={ma10Bounces} ma21={ma21Bounces} ma50={ma50Bounces} onQuickAdd={onQuickAdd} />
     </div>
   );
 }
+
 
 function AllStocksTab({ data }) {
   const [filter, setFilter] = useState("all");
@@ -2597,6 +1708,623 @@ function AllStocksTab({ data }) {
 
 
 /* ─── MARKET OVERVIEW TAB ────────────────────────────────────────────────── */
+// ── Focus Tab — top 8 names across all signal types ──────────────────────────
+
+// ── Weekly Tab ────────────────────────────────────────────────────────────────
+
+const SIGNAL_TYPE_META = {
+  WEEKLY_MA_BOUNCE:    { label: "wEMA Bounce",  color: "#7c4dff", bg: "rgba(124,77,255,0.1)" },
+  WEEKLY_VCP:          { label: "Weekly VCP",   color: "#00cec9", bg: "rgba(0,206,201,0.1)"  },
+  WEEKLY_BO_RETEST:    { label: "BO Retest",    color: "#00b894", bg: "rgba(0,184,148,0.1)"  },
+};
+
+function WeeklySignalRow({ s, onQuickAdd }) {
+  const [expanded, setExpanded] = useState(false);
+  const meta = SIGNAL_TYPE_META[s.signal_type] || { label: s.signal_type, color: "var(--text3)", bg: "var(--bg3)" };
+  const riskPct = s.stop_price && s.price ? ((s.price - s.stop_price) / s.price * 100).toFixed(1) : null;
+  const t1rr    = s.target_1 && s.price && s.stop_price
+    ? ((s.target_1 - s.price) / (s.price - s.stop_price)).toFixed(1)
+    : null;
+
+  return (
+    <>
+      <tr onClick={() => setExpanded(e => !e)} style={{ cursor: "pointer" }}
+        onMouseEnter={e => e.currentTarget.style.background = "var(--bg2)"}
+        onMouseLeave={e => e.currentTarget.style.background = expanded ? "rgba(124,77,255,0.03)" : "transparent"}>
+
+        {/* Signal type badge */}
+        <td style={{ ...TD, width: 110 }}>
+          <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
+            background: meta.bg, color: meta.color, border: `1px solid ${meta.color}40`,
+            whiteSpace: "nowrap" }}>
+            {meta.label}
+          </span>
+        </td>
+
+        {/* Ticker */}
+        <td style={{ ...TD, fontWeight: 700 }}>
+          <a href={tvUrl(s.ticker)} target="_blank" rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            style={{ color: meta.color, textDecoration: "none", fontWeight: 700 }}>
+            {s.ticker}
+          </a>
+          {s.bounce_ma && (
+            <span style={{ marginLeft: 6, fontSize: 9, color: "var(--text3)" }}>{s.bounce_ma}</span>
+          )}
+          {s.stage && s.stage === "retesting" && (
+            <span style={{ marginLeft: 6, fontSize: 8, padding: "1px 4px", borderRadius: 2,
+              background: "rgba(0,184,148,0.12)", color: "#00b894",
+              border: "1px solid rgba(0,184,148,0.3)" }}>AT LEVEL</span>
+          )}
+        </td>
+
+        {/* RS */}
+        <td style={{ ...TD, textAlign: "center" }}>
+          <span style={{ fontWeight: 700, fontSize: 12, color: rsColS(s.rs || 50) }}>
+            {s.rs != null ? Math.round(s.rs) : "—"}
+          </span>
+        </td>
+
+        {/* Price */}
+        <td style={{ ...TD }}>
+          <span style={{ fontWeight: 600 }}>${s.price != null ? Number(s.price).toFixed(2) : "—"}</span>
+          {s.chg != null && (
+            <span style={{ fontSize: 10, marginLeft: 6,
+              color: s.chg > 0 ? "var(--green)" : s.chg < 0 ? "var(--red)" : "var(--text3)" }}>
+              {s.chg > 0 ? "+" : ""}{s.chg.toFixed(1)}%
+            </span>
+          )}
+        </td>
+
+        {/* Weekly score */}
+        <td style={{ ...TD, textAlign: "center" }}>
+          <span style={{ fontWeight: 700, fontSize: 12,
+            color: (s.signal_score||0) >= 8 ? "var(--green)" : (s.signal_score||0) >= 6.5 ? meta.color : "var(--text3)" }}>
+            {s.signal_score != null ? s.signal_score.toFixed(1) : "—"}
+          </span>
+        </td>
+
+        {/* Stop → T1 */}
+        <td style={{ ...TD, fontSize: 10 }}>
+          {s.stop_price && <span style={{ color: "var(--red)" }}>${Number(s.stop_price).toFixed(2)}</span>}
+          {s.target_1   && <span style={{ color: "var(--green)", marginLeft: 6 }}>→ ${Number(s.target_1).toFixed(2)}</span>}
+        </td>
+
+        {/* Risk / RR */}
+        <td style={{ ...TD, textAlign: "center", fontSize: 10, color: "var(--text3)" }}>
+          {riskPct && <span style={{ color: "var(--red)" }}>{riskPct}%</span>}
+          {t1rr && <span style={{ color: "var(--green)", marginLeft: 6 }}>{t1rr}R</span>}
+        </td>
+
+        {/* Expand indicator */}
+        <td style={{ ...TD, textAlign: "center", color: "var(--text3)", fontSize: 10 }}>
+          {expanded ? "▲" : "▼"}
+        </td>
+      </tr>
+
+      {/* Expanded detail row */}
+      {expanded && (
+        <tr style={{ background: "rgba(124,77,255,0.03)" }}>
+          <td colSpan={8} style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", fontSize: 10 }}>
+              {s.wema10 && <span><span style={{ color: "var(--text3)" }}>wEMA10 </span><strong>${Number(s.wema10).toFixed(2)}</strong></span>}
+              {s.wema40 && <span><span style={{ color: "var(--text3)" }}>wEMA40 </span><strong>${Number(s.wema40).toFixed(2)}</strong></span>}
+              {s.resistance && <span><span style={{ color: "var(--text3)" }}>Resistance </span><strong>${Number(s.resistance).toFixed(2)}</strong></span>}
+              {s.vol_ratio != null && <span><span style={{ color: "var(--text3)" }}>Vol ratio </span>
+                <strong style={{ color: s.vol_contracted ? "var(--green)" : "var(--text)" }}>
+                  {Number(s.vol_ratio).toFixed(2)}× {s.vol_contracted ? "✓ contracting" : ""}
+                </strong>
+              </span>}
+              {s.avg_weekly_range != null && <span><span style={{ color: "var(--text3)" }}>Avg weekly range </span><strong>{s.avg_weekly_range}%</strong></span>}
+              {s.contracting_weeks && <span><span style={{ color: "var(--text3)" }}>Contracting weeks </span><strong>{s.contracting_weeks}</strong></span>}
+              {s.spread_3w_pct != null && <span><span style={{ color: "var(--text3)" }}>3w spread </span><strong>{s.spread_3w_pct}%</strong></span>}
+              {s.weeks_since_bo != null && <span><span style={{ color: "var(--text3)" }}>Weeks since BO </span><strong>{s.weeks_since_bo}</strong></span>}
+              {s.ma_stack != null && <span><span style={{ color: "var(--text3)" }}>MA stack </span><strong>{s.ma_stack}/3</strong></span>}
+              {s.target_2 && <span><span style={{ color: "var(--text3)" }}>T2 </span><strong style={{ color: "var(--green)" }}>${Number(s.target_2).toFixed(2)}</strong></span>}
+              {onQuickAdd && (
+                <button onClick={e => { e.stopPropagation(); onQuickAdd({ ...s, signal_type: s.signal_type }); }}
+                  style={{ padding: "2px 8px", fontSize: 9, cursor: "pointer", borderRadius: 3,
+                    border: `1px solid ${meta.color}`, background: "transparent",
+                    color: meta.color, fontFamily: "inherit", marginLeft: "auto" }}>+ Log</button>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function WeeklyBtPanel() {
+  const [stats, setStats]     = useState(null);
+  const [progress, setProgress] = useState(null);
+  const [running, setRunning]   = useState(false);
+
+  const loadStats = () => {
+    fetch("/api/weekly-bt/stats").then(r => r.json()).then(setStats).catch(() => {});
+    fetch("/api/weekly-bt/status").then(r => r.json()).then(p => {
+      setProgress(p);
+      setRunning(p?.status === "running");
+    }).catch(() => {});
+  };
+
+  useEffect(() => {
+    loadStats();
+    const interval = setInterval(loadStats, 8000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const triggerReconstruct = () => {
+    const secret = prompt("Enter trigger secret:");
+    if (!secret) return;
+    setRunning(true);
+    fetch(`/api/weekly-bt/reconstruct?secret=${encodeURIComponent(secret)}&lookback_weeks=250`, { method: "POST" })
+      .then(r => r.json()).then(() => loadStats()).catch(() => setRunning(false));
+  };
+
+  const ExitBar = ({ reasons, total }) => {
+    const cols = { stop: "var(--red)", t1: "var(--green)", t2: "#00b894", timeout: "var(--text3)", data_end: "var(--border)" };
+    return (
+      <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", gap: 1, marginTop: 6 }}>
+        {Object.entries(reasons || {}).filter(([k]) => k !== "data_end").map(([k, v]) => (
+          <div key={k} style={{ flex: v, background: cols[k] || "var(--text3)" }} title={`${k}: ${v}`} />
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ marginTop: 20, padding: "12px 14px", borderRadius: 6,
+      background: "var(--bg2)", border: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text3)", letterSpacing: 1 }}>
+          📊 WEEKLY BACKTEST
+        </span>
+        {progress?.status === "running" && (
+          <span style={{ fontSize: 9, color: "var(--yellow)" }}>
+            Running… {progress.done_weeks}/{progress.total_weeks} weeks ({progress.pct}%)
+          </span>
+        )}
+        {progress?.status === "complete" && (
+          <span style={{ fontSize: 9, color: "var(--green)" }}>
+            ✓ {progress.trades} trades · {progress.total_weeks} weeks
+          </span>
+        )}
+        <button onClick={triggerReconstruct} disabled={running}
+          style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 9, cursor: running ? "not-allowed" : "pointer",
+            borderRadius: 3, border: "1px solid var(--border)", background: "transparent",
+            color: running ? "var(--text3)" : "var(--text)", fontFamily: "inherit" }}>
+          {running ? "Running…" : "▶ Run Backtest"}
+        </button>
+      </div>
+
+      {(!stats || stats.total_trades === 0) ? (
+        <div style={{ fontSize: 10, color: "var(--text3)", textAlign: "center", padding: "16px 0" }}>
+          No weekly backtest data yet. Click "Run Backtest" to generate 52-week results.
+        </div>
+      ) : (
+        <>
+          {/* Key stats row */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 10, marginBottom: 14 }}>
+            {[
+              { label: "WIN RATE",    val: `${stats.win_rate}%`,       col: stats.win_rate >= 50 ? "var(--green)" : "var(--red)" },
+              { label: "AVG WIN",     val: `+${stats.avg_win_pct}%`,   col: "var(--green)" },
+              { label: "AVG LOSS",    val: `${stats.avg_loss_pct}%`,   col: "var(--red)" },
+              { label: "AVG R",       val: `${stats.avg_r}R`,          col: stats.avg_r >= 1 ? "var(--green)" : "var(--text3)" },
+              { label: "EXPECTANCY",  val: `${stats.expectancy}%`,     col: stats.expectancy > 0 ? "var(--green)" : "var(--red)" },
+              { label: "AVG HOLD",    val: `${stats.avg_hold_weeks}w`, col: "var(--text)" },
+              { label: "TOTAL",       val: stats.total_trades,         col: "var(--text3)" },
+            ].map(({ label, val, col }) => (
+              <div key={label} style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, marginBottom: 3 }}>{label}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: col }}>{val}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Exit reason bar */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>EXIT REASONS</div>
+            <ExitBar reasons={stats.exit_reasons} total={stats.total_trades} />
+            <div style={{ display: "flex", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
+              {Object.entries(stats.exit_reasons || {}).filter(([k]) => k !== "data_end").map(([k, v]) => (
+                <span key={k} style={{ fontSize: 9, color: "var(--text3)" }}>
+                  {k}: <strong style={{ color: "var(--text)" }}>{v}</strong>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* By signal type */}
+          {stats.by_signal_type && Object.keys(stats.by_signal_type).length > 0 && (
+            <div>
+              <div style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, marginBottom: 6 }}>BY SETUP TYPE</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {Object.entries(stats.by_signal_type).map(([type, d]) => {
+                  const meta = SIGNAL_TYPE_META[type] || { label: type, color: "var(--text3)" };
+                  return (
+                    <div key={type} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 10 }}>
+                      <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 2,
+                        background: meta.bg, color: meta.color, minWidth: 90 }}>{meta.label}</span>
+                      <span style={{ color: "var(--text3)" }}>{d.trades} trades</span>
+                      <span style={{ color: d.win_rate >= 50 ? "var(--green)" : "var(--red)" }}>{d.win_rate}% WR</span>
+                      <span style={{ color: d.avg_r >= 1 ? "var(--green)" : "var(--text3)" }}>{d.avg_r}R avg</span>
+                      <span style={{ color: d.avg_pnl >= 0 ? "var(--green)" : "var(--red)" }}>{d.avg_pnl > 0 ? "+" : ""}{d.avg_pnl}% avg</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function WeeklyTab({ onQuickAdd }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [view, setView]       = useState("all");   // "all" | "bounce" | "vcp" | "retest"
+  const [sortKey, setSortKey] = useState("signal_score");
+  const [sortDir, setSortDir] = useState(-1);
+  const [showBt, setShowBt]   = useState(false);
+
+  useEffect(() => {
+    fetch("/api/weekly-scan")
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  if (loading) return (
+    <div style={{ padding: 40, textAlign: "center", color: "var(--text3)", fontSize: 12 }}>
+      Loading weekly signals…
+    </div>
+  );
+
+  const signals = data?.status === "ok" ? (
+    view === "bounce" ? (data.ma_bounces || []) :
+    view === "vcp"    ? (data.vcps       || []) :
+    view === "retest" ? (data.bo_retests || []) :
+    (data.all_weekly  || [])
+  ) : [];
+
+  const sorted = [...signals].sort((a, b) => {
+    const av = a[sortKey] ?? (sortDir > 0 ? Infinity : -Infinity);
+    const bv = b[sortKey] ?? (sortDir > 0 ? Infinity : -Infinity);
+    return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
+  });
+
+  function Th({ label, k, align = "left", def = -1 }) {
+    const active = sortKey === k;
+    return (
+      <th onClick={() => { setSortKey(k); setSortDir(sortKey === k ? sortDir * -1 : def); }}
+        style={{ ...TH_STYLE, textAlign: align, color: active ? "#7c4dff" : "var(--text3)", cursor: "pointer" }}>
+        {label}{active ? (sortDir > 0 ? " ↑" : " ↓") : " ↕"}
+      </th>
+    );
+  }
+
+  const counts = data?.status === "ok" ? {
+    all:    (data.all_weekly  || []).length,
+    bounce: (data.ma_bounces  || []).length,
+    vcp:    (data.vcps        || []).length,
+    retest: (data.bo_retests  || []).length,
+  } : {};
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7c4dff", letterSpacing: 1 }}>
+            📅 WEEKLY SETUPS
+          </div>
+          <div style={{ fontSize: 9, color: "var(--text3)", marginTop: 2 }}>
+            Weekly timeframe signals — fewer, higher conviction, longer holds
+            {data?.scanned_at && ` · Updated ${new Date(data.scanned_at).toLocaleDateString()}`}
+          </div>
+        </div>
+
+        {/* Backtest toggle */}
+        <button onClick={() => setShowBt(b => !b)}
+          style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 9, cursor: "pointer",
+            borderRadius: 3, border: `1px solid ${showBt ? "#7c4dff" : "var(--border)"}`,
+            background: showBt ? "rgba(124,77,255,0.1)" : "transparent",
+            color: showBt ? "#7c4dff" : "var(--text3)", fontFamily: "inherit" }}>
+          📊 Backtest
+        </button>
+      </div>
+
+      {/* Backtest panel */}
+      {showBt && <WeeklyBtPanel />}
+
+      {/* No data state */}
+      {(!data || data.status === "no_data") && (
+        <div style={{ padding: "32px 20px", textAlign: "center", color: "var(--text3)", fontSize: 11,
+          background: "var(--bg2)", borderRadius: 6, border: "1px solid var(--border)", marginTop: 12 }}>
+          <div style={{ fontSize: 16, marginBottom: 8 }}>📅</div>
+          <div>No weekly scan data yet.</div>
+          <div style={{ marginTop: 6, fontSize: 10 }}>
+            Weekly signals are generated automatically every <strong>Saturday at 10:30 UK</strong> after the weekend scan.
+            You can also trigger manually via the API.
+          </div>
+        </div>
+      )}
+
+      {data?.status === "ok" && (
+        <>
+          {/* Filter pills */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+            {[
+              { key: "all",    label: "All Signals",    count: counts.all    },
+              { key: "bounce", label: "wEMA Bounce",    count: counts.bounce },
+              { key: "vcp",    label: "Weekly VCP",     count: counts.vcp    },
+              { key: "retest", label: "BO Retest",      count: counts.retest },
+            ].map(({ key, label, count }) => {
+              const active = view === key;
+              const meta = key === "bounce" ? SIGNAL_TYPE_META.WEEKLY_MA_BOUNCE
+                         : key === "vcp"    ? SIGNAL_TYPE_META.WEEKLY_VCP
+                         : key === "retest" ? SIGNAL_TYPE_META.WEEKLY_BO_RETEST
+                         : { color: "#7c4dff", bg: "rgba(124,77,255,0.1)" };
+              return (
+                <button key={key} onClick={() => setView(key)} style={{
+                  padding: "4px 12px", fontSize: 10, cursor: "pointer", borderRadius: 3,
+                  fontFamily: "inherit",
+                  border: `1px solid ${active ? meta.color : "var(--border)"}`,
+                  background: active ? meta.bg : "transparent",
+                  color: active ? meta.color : "var(--text3)",
+                }}>
+                  {label} {count != null && <span style={{ fontSize: 9 }}>({count})</span>}
+                </button>
+              );
+            })}
+          </div>
+
+          {sorted.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: "var(--text3)", fontSize: 11,
+              background: "var(--bg2)", borderRadius: 6, border: "1px solid var(--border)" }}>
+              No signals in this category.
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 700 }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...TH_STYLE, cursor: "default" }}>Type</th>
+                    <Th label="Ticker"  k="ticker"       def={1} />
+                    <Th label="RS"      k="rs"           align="center" />
+                    <Th label="Price"   k="price"        />
+                    <Th label="Score"   k="signal_score" align="center" />
+                    <th style={{ ...TH_STYLE, cursor: "default" }}>Stop → T1</th>
+                    <th style={{ ...TH_STYLE, cursor: "default", textAlign: "center" }}>Risk / RR</th>
+                    <th style={{ ...TH_STYLE, cursor: "default", textAlign: "center" }}>Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map(s => (
+                    <WeeklySignalRow key={s.ticker + s.signal_type} s={s} onQuickAdd={onQuickAdd} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function FocusTab({ data, onQuickAdd }) {
+  const [focus, setFocus]     = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [maxPicks, setMaxPicks] = useState(8);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/focus-list?max_picks=${maxPicks}`)
+      .then(r => r.json())
+      .then(d => { setFocus(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [maxPicks]);
+
+  const SOURCE_STYLE = {
+    HVE_RETEST: { label:"HVE↩ RETEST",  col:"#ff9f43", bg:"rgba(255,159,67,0.12)" },
+    HVE_WATCH:  { label:"HVE WATCH",     col:"#ffd89b", bg:"rgba(255,216,155,0.08)" },
+    EP_READY:   { label:"EP ✓",          col:"#00cec9", bg:"rgba(0,206,201,0.1)" },
+    EP_WATCH:   { label:"EP WATCH",      col:"#81ecec", bg:"rgba(129,236,236,0.07)" },
+    MA10:       { label:"MA10 BOUNCE",   col:"var(--cyan)",   bg:"rgba(0,229,255,0.07)" },
+    MA21:       { label:"MA21 BOUNCE",   col:"var(--purple)", bg:"rgba(124,77,255,0.07)" },
+    MA50:       { label:"MA50 BOUNCE",   col:"var(--yellow)", bg:"rgba(245,166,35,0.07)" },
+    PATTERN:    { label:"PATTERN",       col:"var(--text3)",  bg:"var(--bg3)" },
+  };
+
+  const TIER_STYLE = {
+    TAKE:    { label:"ACT NOW",  col:"#00f5a0", dot:"●" },
+    WATCH:   { label:"WATCH",    col:"#00c8ff", dot:"◉" },
+    MONITOR: { label:"MONITOR",  col:"var(--text3)", dot:"○" },
+  };
+
+  if (loading) return (
+    <div style={{ padding:40, textAlign:"center", color:"var(--text3)", fontSize:12 }}>
+      Loading focus list…
+    </div>
+  );
+
+  if (!focus || !focus.focus_list) return (
+    <div style={{ padding:40, textAlign:"center", color:"var(--text3)", fontSize:12 }}>
+      No focus data. Run a scan first.
+    </div>
+  );
+
+  const { focus_list = [], summary = {}, market_score, market_label, scanned_at } = focus;
+
+  return (
+    <div>
+      <RegimeGate compact={true} />
+
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:14, flexWrap:"wrap" }}>
+        <div>
+          <div style={{ fontSize:11, fontWeight:700, color:"var(--accent)", letterSpacing:1 }}>
+            🎯 FOCUS LIST
+          </div>
+          <div style={{ fontSize:9, color:"var(--text3)", marginTop:2 }}>
+            Top names across all signal types · {summary.total_scanned || 0} candidates ranked
+            {scanned_at && ` · ${new Date(scanned_at).toLocaleTimeString()}`}
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div style={{ display:"flex", gap:8, marginLeft:"auto", flexWrap:"wrap" }}>
+          {summary.hve_in_list > 0 && (
+            <span style={{ fontSize:9, padding:"2px 8px", borderRadius:3,
+              background:"rgba(255,159,67,0.12)", color:"#ff9f43",
+              border:"1px solid rgba(255,159,67,0.3)" }}>
+              {summary.hve_in_list} HVE
+            </span>
+          )}
+          {summary.ep_in_list > 0 && (
+            <span style={{ fontSize:9, padding:"2px 8px", borderRadius:3,
+              background:"rgba(0,206,201,0.1)", color:"#00cec9",
+              border:"1px solid rgba(0,206,201,0.3)" }}>
+              {summary.ep_in_list} EP
+            </span>
+          )}
+          {summary.ma_in_list > 0 && (
+            <span style={{ fontSize:9, padding:"2px 8px", borderRadius:3,
+              background:"rgba(41,98,255,0.08)", color:"var(--accent)",
+              border:"1px solid rgba(41,98,255,0.25)" }}>
+              {summary.ma_in_list} MA bounce
+            </span>
+          )}
+        </div>
+
+        {/* Max picks control */}
+        <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+          <span style={{ fontSize:9, color:"var(--text3)" }}>Show</span>
+          {[5, 8, 12].map(n => (
+            <button key={n} onClick={() => setMaxPicks(n)} style={{
+              padding:"2px 7px", fontSize:9, cursor:"pointer", borderRadius:3,
+              fontFamily:"inherit",
+              border:`1px solid ${maxPicks===n ? "var(--accent)" : "var(--border)"}`,
+              background: maxPicks===n ? "rgba(41,98,255,0.1)" : "transparent",
+              color: maxPicks===n ? "var(--accent)" : "var(--text3)",
+            }}>{n}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Cards */}
+      {focus_list.length === 0 ? (
+        <div style={{ padding:32, textAlign:"center", color:"var(--text3)", fontSize:11,
+          background:"var(--bg2)", borderRadius:6, border:"1px solid var(--border)" }}>
+          No signals found. Run a scan first.
+        </div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+          {focus_list.map((s, i) => {
+            const tier = TIER_STYLE[s.priority_tier] || TIER_STYLE.MONITOR;
+            const src  = SOURCE_STYLE[s.focus_source] || SOURCE_STYLE.PATTERN;
+            const isTop3 = i < 3;
+            return (
+              <div key={s.ticker} style={{
+                padding:"10px 14px", borderRadius:5,
+                background: isTop3 ? "rgba(41,98,255,0.04)" : "var(--bg2)",
+                border:`1px solid ${isTop3 ? "rgba(41,98,255,0.2)" : "var(--border)"}`,
+                borderLeft:`3px solid ${tier.col}`,
+              }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+
+                  {/* Rank */}
+                  <span style={{ fontSize:11, fontWeight:700, color:"var(--text3)",
+                    minWidth:18, textAlign:"center" }}>#{i+1}</span>
+
+                  {/* Tier dot */}
+                  <span style={{ fontSize:10, color:tier.col }} title={tier.label}>{tier.dot}</span>
+
+                  {/* Ticker */}
+                  <a href={tvUrl(s.ticker)} target="_blank" rel="noopener noreferrer"
+                    style={{ fontWeight:700, fontSize:14, color:"var(--accent)", textDecoration:"none" }}>
+                    {s.ticker}
+                  </a>
+
+                  {/* Source badge */}
+                  <span style={{ fontSize:8, fontWeight:700, padding:"2px 6px", borderRadius:2,
+                    background:src.bg, color:src.col, border:`1px solid ${src.col}30` }}>
+                    {src.label}
+                  </span>
+
+                  {/* MA type if bounce */}
+                  {s._ma && (
+                    <span style={{ fontSize:9, color: MA_COLORS[s._ma] || "var(--text3)" }}>
+                      {s._ma}
+                    </span>
+                  )}
+
+                  {/* Sector */}
+                  {s.sector && (
+                    <span style={{ fontSize:10, color:"var(--text3)" }}>{s.sector}</span>
+                  )}
+
+                  {/* Key stats */}
+                  <div style={{ marginLeft:"auto", display:"flex", gap:14, alignItems:"center", flexWrap:"wrap" }}>
+                    <span>
+                      <span style={{ fontSize:8, color:"var(--text3)", marginRight:3 }}>RS</span>
+                      <span style={{ fontSize:12, fontWeight:700, color:rsColS(s.rs) }}>{s.rs}</span>
+                    </span>
+                    <span>
+                      <span style={{ fontSize:8, color:"var(--text3)", marginRight:3 }}>VCS</span>
+                      <span style={{ fontSize:12, fontWeight:700, color:vcsColS(s.vcs) }}>
+                        {s.vcs != null ? s.vcs.toFixed(1) : "—"}
+                      </span>
+                    </span>
+                    <span style={{ fontSize:11, fontWeight:600 }}>
+                      ${s.price != null ? Number(s.price).toFixed(2) : "—"}
+                      {s.chg != null && (
+                        <span style={{ fontSize:10, marginLeft:5,
+                          color:(s.chg>0)?"var(--green)":(s.chg<0)?"var(--red)":"var(--text3)" }}>
+                          {s.chg>0?"+":""}{s.chg.toFixed(1)}%
+                        </span>
+                      )}
+                    </span>
+                    <span>
+                      <span style={{ fontSize:8, color:"var(--text3)", marginRight:3 }}>SCORE</span>
+                      <span style={{ fontSize:11, fontWeight:700, color:scoreColS(s.focus_score/10) }}>
+                        {s.focus_score != null ? s.focus_score.toFixed(0) : "—"}
+                      </span>
+                    </span>
+                    {s.stop_price && (
+                      <span style={{ fontSize:10 }}>
+                        <span style={{ color:"var(--red)" }}>SL ${Number(s.stop_price).toFixed(2)}</span>
+                        {s.target_1 && <span style={{ color:"var(--green)", marginLeft:6 }}>T1 ${Number(s.target_1).toFixed(2)}</span>}
+                      </span>
+                    )}
+                    {onQuickAdd && (
+                      <button onClick={() => onQuickAdd({ ...s, signal_type: s.focus_source || s._ma })}
+                        style={{ padding:"2px 8px", fontSize:9, cursor:"pointer", borderRadius:3,
+                          border:"1px solid var(--accent)", background:"transparent",
+                          color:"var(--accent)", fontFamily:"inherit" }}>+ Log</button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Priority reasoning */}
+                {s.priority_reason && (
+                  <div style={{ fontSize:9, color:"var(--text3)", marginTop:5, paddingLeft:28 }}>
+                    {s.priority_reason}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MarketTab({ data }) {
   const { indices = {}, vix, vixLabel, breadth = {}, sectorRs = {}, topRsGainers = [], market = {} } = data || {};
 
@@ -2712,9 +2440,9 @@ function MarketTab({ data }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
             <thead>
               <tr>
-                {["RS","SECTOR","ETF","1M %","RS TREND","DIST 200MA"].map(h => (
+                {["#","SECTOR","ETF","1D RS","1W RS","1M RS","TREND"].map(h => (
                   <th key={h} style={{
-                    textAlign: "left", padding: "4px 8px", fontSize: 9,
+                    textAlign: h === "#" ? "center" : "left", padding: "4px 8px", fontSize: 9,
                     color: "var(--text3)", borderBottom: "1px solid var(--border)",
                     letterSpacing: 1,
                   }}>{h}</th>
@@ -2723,22 +2451,28 @@ function MarketTab({ data }) {
             </thead>
             <tbody>
               {sectors.map((s, i) => {
-                const rs1m = s.rs_vs_spy_1m;
                 const etfName = s.etf || "—";
+                const fmtRs = v => v != null ? `${v > 0 ? "+" : ""}${v.toFixed(2)}%` : "—";
                 return (
                   <tr key={s.name} style={{ background: i % 2 === 0 ? "transparent" : "var(--bg2)" }}>
-                    <td style={{ padding: "6px 8px" }}>
+                    <td style={{ padding: "6px 8px", textAlign: "center" }}>
                       <span style={{
-                        display: "inline-block", minWidth: 28, textAlign: "center",
-                        padding: "1px 5px", borderRadius: 2, fontSize: 10, fontWeight: 700,
-                        background: rsColor(s.rank ? (11 - s.rank) * 10 : 50),
+                        display: "inline-block", minWidth: 22, textAlign: "center",
+                        padding: "1px 4px", borderRadius: 2, fontSize: 10, fontWeight: 700,
+                        background: rsColor(s.rank ? Math.max(0, (16 - s.rank) / 15 * 100) : 50),
                         color: "#fff",
                       }}>{s.rank || "—"}</span>
                     </td>
                     <td style={{ padding: "6px 8px", fontWeight: 600, color: "var(--text)" }}>{s.name}</td>
                     <td style={{ padding: "6px 8px", color: "var(--accent)", fontWeight: 700 }}>{etfName}</td>
-                    <td style={{ padding: "6px 8px", color: chgColor(rs1m), fontWeight: 600 }}>
-                      {rs1m != null ? `${rs1m > 0 ? "+" : ""}${rs1m?.toFixed(1)}%` : "—"}
+                    <td style={{ padding: "6px 8px", color: chgColor(s.rs_vs_spy_1d), fontWeight: 600, fontSize: 10 }}>
+                      {fmtRs(s.rs_vs_spy_1d)}
+                    </td>
+                    <td style={{ padding: "6px 8px", color: chgColor(s.rs_vs_spy_1w), fontWeight: 600, fontSize: 10 }}>
+                      {fmtRs(s.rs_vs_spy_1w)}
+                    </td>
+                    <td style={{ padding: "6px 8px", color: chgColor(s.rs_vs_spy_1m), fontWeight: 600, fontSize: 10 }}>
+                      {fmtRs(s.rs_vs_spy_1m)}
                     </td>
                     <td style={{ padding: "6px 8px" }}>
                       <span style={{
@@ -2750,9 +2484,6 @@ function MarketTab({ data }) {
                       }}>
                         {s.trend || "neutral"}
                       </span>
-                    </td>
-                    <td style={{ padding: "6px 8px", color: "var(--text2)", fontSize: 10 }}>
-                      {s.dist_from_200ma != null ? `${s.dist_from_200ma > 0 ? "+" : ""}${s.dist_from_200ma?.toFixed(1)}%` : "—"}
                     </td>
                   </tr>
                 );
@@ -2771,6 +2502,969 @@ function MarketTab({ data }) {
       <div style={{ marginTop: 20 }}>
         <SectorRotation />
       </div>
+    </div>
+  );
+}
+
+
+/* ─── STOCKBEE EP DASHBOARD ──────────────────────────────────────────────── */
+
+const MAGNA_LABELS = {
+  M: { name: "Massive Acceleration", tip: "Earnings beat 20%+ OR sales growth 30%+ for 2 consecutive quarters" },
+  G: { name: "Guidance", tip: "Company raised forward guidance or analysts raised estimates in last 30 days" },
+  N: { name: "Neglect", tip: "Low analyst coverage (<10), not in major news, low social mentions" },
+  A_analyst: { name: "Analyst Upgrades", tip: "At least one analyst upgrade or price target raise in last 14 days" },
+  "53+": { name: "Technical Position", tip: "Stock trading above 50-day MA AND within 3% of 52-week high" },
+  CAP: { name: "Small/Mid Cap", tip: "Market cap under $10 billion" },
+  "10x10": { name: "Young Company", tip: "IPO within last 10 years" },
+};
+
+const EP_TYPE_STYLES = {
+  CLASSIC:   { bg: "rgba(255,152,0,0.12)", color: "#ff9800", border: "rgba(255,152,0,0.4)", label: "CLASSIC EP" },
+  DELAYED:   { bg: "rgba(41,98,255,0.12)", color: "#2962ff", border: "rgba(41,98,255,0.4)", label: "DELAYED EP" },
+  "9M":      { bg: "rgba(156,39,176,0.12)", color: "#9c27b0", border: "rgba(156,39,176,0.4)", label: "9M EP" },
+  STORY:     { bg: "rgba(255,87,34,0.12)", color: "#ff5722", border: "rgba(255,87,34,0.4)", label: "STORY EP" },
+  MOM_BURST: { bg: "rgba(0,150,136,0.12)", color: "#009688", border: "rgba(0,150,136,0.4)", label: "MOM BURST" },
+};
+
+const ENTRY_APPROACH_STYLES = {
+  AGGRESSIVE:     { bg: "rgba(255,82,82,0.12)", color: "#ff5252", label: "AGGRESSIVE" },
+  STANDARD:       { bg: "rgba(255,152,0,0.12)", color: "#ff9800", label: "STANDARD" },
+  CONSERVATIVE:   { bg: "rgba(41,98,255,0.12)", color: "#2962ff", label: "CONSERVATIVE" },
+  "VOLUME CONFIRM": { bg: "rgba(156,39,176,0.12)", color: "#9c27b0", label: "VOLUME CONFIRM" },
+  "QUICK PROFIT":   { bg: "rgba(255,87,34,0.12)", color: "#ff5722", label: "QUICK PROFIT" },
+  "PULLBACK ENTRY": { bg: "rgba(0,150,136,0.12)", color: "#009688", label: "PULLBACK ENTRY" },
+  WATCH:            { bg: "var(--bg3)", color: "var(--text3)", label: "WATCH" },
+};
+
+function MagnaScoreBadge({ score, size = "normal" }) {
+  const color = score >= 5 ? "#2d7a3a" : score >= 3 ? "#b8820a" : "#c43a2a";
+  const bg = score >= 5 ? "rgba(45,122,58,0.15)" : score >= 3 ? "rgba(184,130,10,0.12)" : "rgba(196,58,42,0.1)";
+  const label = score >= 5 ? "HIGH" : score >= 3 ? "MOD" : "LOW";
+  const fontSize = size === "large" ? 16 : 12;
+  return (
+    <span title={`MAGNA Score: ${score}/7 - ${label} conviction`} style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      fontSize, fontWeight: 800, padding: size === "large" ? "4px 10px" : "2px 7px",
+      borderRadius: 3, background: bg, color,
+      border: `1px solid ${color}55`, letterSpacing: 0.5,
+    }}>
+      {score}/7
+      <span style={{ fontSize: size === "large" ? 9 : 7, fontWeight: 600, opacity: 0.8 }}>{label}</span>
+    </span>
+  );
+}
+
+function MagnaDetails({ details }) {
+  if (!details) return null;
+  return (
+    <div style={{
+      display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+      gap: 4, padding: "8px 10px", borderRadius: 3,
+      background: "var(--bg)", border: "1px solid var(--border)",
+    }}>
+      {Object.entries(details).map(([key, d]) => {
+        const meta = MAGNA_LABELS[key] || { name: key, tip: "" };
+        return (
+          <div key={key} title={meta.tip} style={{
+            display: "flex", alignItems: "center", gap: 5,
+            padding: "3px 6px", borderRadius: 2,
+            background: d.met ? "rgba(45,122,58,0.08)" : "transparent",
+          }}>
+            <span style={{
+              width: 14, height: 14, borderRadius: "50%", display: "flex",
+              alignItems: "center", justifyContent: "center",
+              fontSize: 8, fontWeight: 800,
+              background: d.met ? "#2d7a3a" : "var(--bg3)",
+              color: d.met ? "#fff" : "var(--text3)",
+            }}>
+              {d.met ? "\u2713" : "\u2717"}
+            </span>
+            <div>
+              <div style={{ fontSize: 8, fontWeight: 700, color: d.met ? "#2d7a3a" : "var(--text3)", letterSpacing: 0.5 }}>
+                {key.replace("A_analyst", "A")}
+              </div>
+              <div style={{ fontSize: 7, color: "var(--text3)", lineHeight: 1.3, maxWidth: 120 }}>
+                {d.reason}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function EPTypeBadge({ type }) {
+  const style = EP_TYPE_STYLES[type] || EP_TYPE_STYLES.CLASSIC;
+  return (
+    <span style={{
+      fontSize: 9, fontWeight: 800, padding: "2px 8px", borderRadius: 2,
+      background: style.bg, color: style.color,
+      border: `1px solid ${style.border}`, letterSpacing: 0.8,
+    }}>
+      {style.label}
+    </span>
+  );
+}
+
+function EntryTacticCard({ tactic }) {
+  if (!tactic) return null;
+  const style = ENTRY_APPROACH_STYLES[tactic.entry_approach] || ENTRY_APPROACH_STYLES.WATCH;
+  return (
+    <div style={{
+      padding: "8px 12px", borderRadius: 3,
+      background: style.bg, border: `1px solid ${style.color}30`,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 10, fontWeight: 800, color: style.color, letterSpacing: 1 }}>
+          {style.label}
+        </span>
+        {tactic.risk_label && (
+          <span style={{ fontSize: 8, color: "var(--text3)" }}>{tactic.risk_label}</span>
+        )}
+      </div>
+      <div style={{ fontSize: 9, color: "var(--text2)", marginBottom: 6 }}>
+        {tactic.entry_description}
+      </div>
+      <div style={{ display: "flex", gap: 16, fontSize: 10 }}>
+        {tactic.entry_price && (
+          <span>
+            <span style={{ color: "var(--text3)", fontSize: 8 }}>ENTRY </span>
+            <span style={{ fontWeight: 700, color: "var(--accent)" }}>${tactic.entry_price?.toFixed(2)}</span>
+          </span>
+        )}
+        {tactic.stop_price && (
+          <span>
+            <span style={{ color: "var(--text3)", fontSize: 8 }}>STOP </span>
+            <span style={{ fontWeight: 700, color: "var(--red)" }}>${tactic.stop_price?.toFixed(2)}</span>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ShortInterestBadge({ shortData }) {
+  if (!shortData || shortData.short_pct_float == null) return null;
+  const pct = shortData.short_pct_float;
+  const squeeze = shortData.squeeze_potential;
+  const col = squeeze ? "#9c27b0" : pct > 10 ? "#ff9800" : "var(--text3)";
+  return (
+    <span title={`Short interest: ${pct}% of float. Days to cover: ${shortData.days_to_cover || "N/A"}`} style={{
+      fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
+      background: squeeze ? "rgba(156,39,176,0.1)" : "var(--bg3)",
+      color: col, border: `1px solid ${col}33`,
+    }}>
+      SI {pct}%{squeeze ? " SQUEEZE" : ""}
+    </span>
+  );
+}
+
+function SalesSparkline({ data }) {
+  if (!data || data.length < 2) return null;
+  const max = Math.max(...data.map(Math.abs), 1);
+  const h = 20;
+  const w = data.length * 14;
+  return (
+    <svg width={w} height={h} style={{ verticalAlign: "middle" }}>
+      {data.map((v, i) => {
+        const barH = Math.abs(v) / max * (h - 4);
+        const y = h - barH - 2;
+        const fill = v >= 100 ? "#2d7a3a" : v >= 0 ? "#5a9a3a" : "#c43a2a";
+        return <rect key={i} x={i * 14} y={y} width={10} height={barH} rx={1} fill={fill} />;
+      })}
+    </svg>
+  );
+}
+
+function BreadthGauge({ breadth }) {
+  if (!breadth || breadth.pct_above_50ma == null) return null;
+  const pct = breadth.pct_above_50ma;
+  const col = breadth.regime_color === "green" ? "#2d7a3a"
+            : breadth.regime_color === "red" ? "#c43a2a" : "#b8820a";
+  const bg = breadth.regime_color === "green" ? "rgba(45,122,58,0.1)"
+           : breadth.regime_color === "red" ? "rgba(196,58,42,0.08)" : "rgba(184,130,10,0.08)";
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 12, padding: "10px 16px",
+      borderRadius: 4, background: bg, border: `1px solid ${col}40`,
+    }}>
+      <div>
+        <div style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, marginBottom: 2 }}>S&P BREADTH</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: col }}>{pct}%</div>
+        <div style={{ fontSize: 8, color: "var(--text3)" }}>above 50MA</div>
+      </div>
+      <div style={{
+        width: 60, height: 8, background: "var(--bg3)", borderRadius: 4, overflow: "hidden",
+      }}>
+        <div style={{
+          width: `${Math.min(100, pct)}%`, height: "100%",
+          background: col, borderRadius: 4, transition: "width 0.3s",
+        }} />
+      </div>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: col }}>{breadth.regime}</div>
+        <div style={{ fontSize: 8, color: "var(--text3)", maxWidth: 150 }}>{breadth.trade_guidance}</div>
+      </div>
+      {breadth.vix_level && (
+        <div style={{ marginLeft: "auto" }}>
+          <div style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>VIX</div>
+          <div style={{
+            fontSize: 14, fontWeight: 700,
+            color: breadth.vix_level > 25 ? "#c43a2a" : breadth.vix_level > 18 ? "#b8820a" : "#2d7a3a",
+          }}>{breadth.vix_level}</div>
+        </div>
+      )}
+      {breadth.spy_above_50ma != null && (
+        <div>
+          <div style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>SPY</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: breadth.spy_above_50ma ? "#2d7a3a" : "#c43a2a" }}>
+            {breadth.spy_above_50ma ? "Above" : "Below"} 50MA
+          </div>
+        </div>
+      )}
+      {breadth.breadth_ad_ratio != null && (
+        <div>
+          <div style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>A/D</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: breadth.breadth_ad_ratio >= 1 ? "#2d7a3a" : "#c43a2a" }}>
+            {breadth.breadth_ad_ratio}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConvictionTierBadge({ tier, label, color }) {
+  if (!tier && tier !== 0) return null;
+  const styles = {
+    1: { bg: "rgba(45,122,58,0.12)", color: "#2d7a3a", border: "rgba(45,122,58,0.4)" },
+    2: { bg: "rgba(255,109,0,0.12)", color: "#ff6d00", border: "rgba(255,109,0,0.4)" },
+    0: { bg: "rgba(100,100,100,0.08)", color: "#888", border: "rgba(100,100,100,0.2)" },
+  };
+  const st = styles[tier] || styles[0];
+  return (
+    <span style={{
+      fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
+      background: st.bg, color: st.color, border: `1px solid ${st.border}`,
+      letterSpacing: 0.5,
+    }}>
+      {label || (tier === 1 ? "TIER 1" : tier === 2 ? "TIER 2" : "WATCH")}
+    </span>
+  );
+}
+
+function ExitStrategyCard({ exit, sizing }) {
+  if (!exit) return null;
+  return (
+    <div style={{
+      fontSize: 9, padding: "8px 10px", borderRadius: 3, marginTop: 6,
+      background: "rgba(41,98,255,0.04)", border: "1px solid rgba(41,98,255,0.15)",
+    }}>
+      <div style={{ fontWeight: 700, fontSize: 8, color: "var(--text3)", letterSpacing: 1, marginBottom: 4 }}>
+        EXIT STRATEGY (BE{exit.be_trigger_pct}% + TRAIL {exit.trail_pct}%)
+      </div>
+      <div style={{ color: "var(--text2)", lineHeight: 1.5 }}>
+        <span style={{ fontWeight: 600 }}>Stop:</span> ${exit.stop_price} ({exit.stop_dist_pct}% risk)
+        {" | "}
+        <span style={{ fontWeight: 600 }}>Breakeven at:</span> +{exit.be_trigger_pct}%
+        {" | "}
+        <span style={{ fontWeight: 600 }}>Trail:</span> {exit.trail_pct}% from highs
+      </div>
+      {sizing && (
+        <div style={{ color: "var(--text3)", marginTop: 3 }}>
+          Risk {sizing.risk_pct}% equity per trade at stop
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StockbeeEPCard({ s, onQuickAdd }) {
+  const epStyle = EP_TYPE_STYLES[s.ep_type] || EP_TYPE_STYLES.CLASSIC;
+  const [showMagna, setShowMagna] = React.useState(false);
+  const [showExit, setShowExit] = React.useState(false);
+
+  return (
+    <div style={{
+      background: "var(--bg2)", borderRadius: 4, padding: "12px 14px", marginBottom: 10,
+      border: `1px solid ${epStyle.border}`, borderLeft: `4px solid ${s.tier_color || epStyle.color}`,
+    }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+        <TVLink ticker={s.ticker}>
+          <span style={{ fontWeight: 700, fontSize: 14, color: "var(--accent)" }}>{s.ticker}</span>
+        </TVLink>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>${s.price?.toFixed(2)}</span>
+        {s.gap_pct != null && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: s.gap_pct >= 50 ? "#ff6d00" : s.gap_pct >= 30 ? "#2d7a3a" : "var(--text2)",
+          }}>
+            +{s.gap_pct}%
+          </span>
+        )}
+        <EPTypeBadge type={s.ep_type} />
+        {s.conviction_tier != null && (
+          <ConvictionTierBadge tier={s.conviction_tier} label={s.tier_label} color={s.tier_color} />
+        )}
+        {s.dollar_vol != null && s.dollar_vol < 5000000 && (
+          <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
+            background: "rgba(156,39,176,0.1)", color: "#9c27b0", border: "1px solid rgba(156,39,176,0.3)",
+            letterSpacing: 0.5 }}>
+            MICRO-CAP
+          </span>
+        )}
+        <MagnaScoreBadge score={s.magna_score || 0} />
+        {s.short_pct_float != null && <ShortInterestBadge shortData={s} />}
+        {s.sales_accelerating && (
+          <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
+            background: "rgba(45,122,58,0.1)", color: "#2d7a3a", border: "1px solid rgba(45,122,58,0.3)" }}>
+            ACCEL REV {s.triple_digit ? "100%+" : ""}
+          </span>
+        )}
+        {s.ep_warning && (
+          <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
+            background: "rgba(255,87,34,0.1)", color: "#ff5722", border: "1px solid rgba(255,87,34,0.3)" }}>
+            {s.ep_warning}
+          </span>
+        )}
+        {onQuickAdd && (
+          <button onClick={() => onQuickAdd(s)} style={{
+            marginLeft: "auto", fontSize: 9, padding: "2px 8px",
+            background: "var(--bg3)", border: "1px solid var(--border)",
+            color: "var(--text2)", borderRadius: 2, cursor: "pointer",
+            fontFamily: "inherit",
+          }}>+ Journal</button>
+        )}
+      </div>
+
+      {/* Tier description */}
+      {s.conviction_tier > 0 && s.tier_description && (
+        <div style={{
+          fontSize: 8, color: s.tier_color || "var(--text3)", marginBottom: 6,
+          fontWeight: 600, fontStyle: "italic",
+        }}>
+          {s.tier_description}
+        </div>
+      )}
+
+      {/* EP Details */}
+      <div style={{ fontSize: 9, color: "var(--text2)", marginBottom: 8 }}>
+        {s.ep_type_details}
+      </div>
+
+      {/* Sparkline for revenue */}
+      {s.sparkline_data && s.sparkline_data.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>REV GROWTH</span>
+          <SalesSparkline data={s.sparkline_data} />
+          <span style={{ fontSize: 8, color: "var(--text3)" }}>
+            {s.revenue_trend?.map(v => v != null ? `${v > 0 ? "+" : ""}${v}%` : "?").join(" > ")}
+          </span>
+        </div>
+      )}
+
+      {/* MAGNA score + Exit Strategy toggles */}
+      <div style={{ marginBottom: 8, display: "flex", gap: 6 }}>
+        <button onClick={() => setShowMagna(!showMagna)} style={{
+          fontSize: 8, padding: "2px 8px", background: "var(--bg3)",
+          border: "1px solid var(--border)", color: "var(--text3)",
+          borderRadius: 2, cursor: "pointer", fontFamily: "inherit",
+        }}>
+          {showMagna ? "Hide" : "Show"} MAGNA Details
+        </button>
+        {s.exit_strategy && (
+          <button onClick={() => setShowExit(!showExit)} style={{
+            fontSize: 8, padding: "2px 8px", background: showExit ? "rgba(41,98,255,0.1)" : "var(--bg3)",
+            border: `1px solid ${showExit ? "rgba(41,98,255,0.3)" : "var(--border)"}`,
+            color: showExit ? "#2962ff" : "var(--text3)",
+            borderRadius: 2, cursor: "pointer", fontFamily: "inherit",
+          }}>
+            {showExit ? "Hide" : "Show"} Exit Strategy
+          </button>
+        )}
+      </div>
+      {showMagna && <div style={{ marginBottom: 6 }}><MagnaDetails details={s.magna_details} /></div>}
+      {showExit && <ExitStrategyCard exit={s.exit_strategy} sizing={s.position_sizing} />}
+
+      {/* Entry Tactic */}
+      {s.entry_tactic && <EntryTacticCard tactic={s.entry_tactic} />}
+    </div>
+  );
+}
+
+function StockbeeEPDashboard({ onQuickAdd }) {
+  const [epData, setEpData] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+  const [subTab, setSubTab] = React.useState("overview");
+  const [minMagna, setMinMagna] = React.useState(3);
+  const [showAllScores, setShowAllScores] = React.useState(false);
+  const [tierFilter, setTierFilter] = React.useState("focused");
+  const [minGap, setMinGap] = React.useState(0);
+  const [typeFilter, setTypeFilter] = React.useState("all");
+
+  const API = process.env.REACT_APP_API_URL || "";
+
+  const fetchData = React.useCallback(() => {
+    setLoading(true);
+    fetch(`${API}/api/ep-dashboard`)
+      .then(r => r.json())
+      .then(d => { setEpData(d); setError(null); })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [API]);
+
+  React.useEffect(() => { fetchData(); }, [fetchData]);
+
+  const triggerScan = () => {
+    fetch(`${API}/api/ep-dashboard/scan`, { method: "POST" })
+      .then(r => r.json())
+      .then(() => { setTimeout(fetchData, 5000); })
+      .catch(e => setError(e.message));
+  };
+
+  if (loading && !epData) return (
+    <div style={{ padding: 40, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
+      Loading EP Dashboard...
+    </div>
+  );
+
+  if (error && !epData) return (
+    <div style={{ padding: 40, textAlign: "center" }}>
+      <div style={{ color: "#c43a2a", fontSize: 11, marginBottom: 8 }}>Error: {error}</div>
+      <button onClick={fetchData} style={{ fontSize: 10, padding: "4px 12px", cursor: "pointer" }}>Retry</button>
+    </div>
+  );
+
+  const data = epData || {};
+  const summary = data.summary || {};
+  const allEps = data.all_eps || [];
+  const filteredEps = allEps.filter(e => {
+    if (!showAllScores && (e.magna_score || 0) < minMagna) return false;
+    if (minGap > 0 && (e.gap_pct || 0) < minGap) return false;
+    if (typeFilter !== "all" && e.ep_type !== typeFilter) return false;
+    return true;
+  });
+  const breadth = data.sp500_breadth || {};
+  const watchlist = data.ep_watchlist || [];
+  const volSpikes = data.volume_spikes || [];
+  const subTabs = ["overview", "classic", "delayed", "9m", "story", "momentum", "watchlist", "volume"];
+
+  return (
+    <div>
+      {/* S&P Breadth Market Regime */}
+      <BreadthGauge breadth={breadth} />
+
+      {/* Sector RS one-liner */}
+      {data.sector_rs_summary && (data.sector_rs_summary.leading?.length > 0 || data.sector_rs_summary.lagging?.length > 0) && (
+        <div style={{
+          fontSize: 9, color: "var(--text3)", marginTop: 8, padding: "5px 12px",
+          background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 3,
+          display: "flex", gap: 6, flexWrap: "wrap",
+        }}>
+          <span style={{ fontSize: 8, letterSpacing: 1, fontWeight: 600, color: "var(--text3)" }}>SECTORS</span>
+          {data.sector_rs_summary.leading?.length > 0 && (
+            <span>
+              <span style={{ color: "#2d7a3a", fontWeight: 600 }}>Leading: </span>
+              {data.sector_rs_summary.leading.join(", ")}
+            </span>
+          )}
+          {data.sector_rs_summary.leading?.length > 0 && data.sector_rs_summary.lagging?.length > 0 && (
+            <span style={{ color: "var(--border)" }}>|</span>
+          )}
+          {data.sector_rs_summary.lagging?.length > 0 && (
+            <span>
+              <span style={{ color: "var(--red)", fontWeight: 600 }}>Lagging: </span>
+              {data.sector_rs_summary.lagging.join(", ")}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Summary bar */}
+      <div style={{
+        display: "flex", gap: 8, marginTop: 12, marginBottom: 14, flexWrap: "wrap",
+        alignItems: "center",
+      }}>
+        <div style={{
+          padding: "6px 12px", borderRadius: 3, background: "var(--bg2)",
+          border: "1px solid var(--border)", fontSize: 10,
+        }}>
+          <span style={{ color: "var(--text3)", fontSize: 8, letterSpacing: 1 }}>TOTAL EPs </span>
+          <span style={{ fontWeight: 700, color: "var(--accent)" }}>{summary.total_eps || 0}</span>
+        </div>
+        {["classic", "delayed", "nine_m", "story", "mom_burst"].map(key => {
+          const labels = { classic: "Classic", delayed: "Delayed", nine_m: "9M", story: "Story", mom_burst: "Mom Burst" };
+          const val = summary[key] || 0;
+          if (val === 0) return null;
+          return (
+            <div key={key} style={{
+              padding: "4px 10px", borderRadius: 3, background: "var(--bg2)",
+              border: "1px solid var(--border)", fontSize: 9,
+            }}>
+              <span style={{ color: "var(--text3)" }}>{labels[key]} </span>
+              <span style={{ fontWeight: 700 }}>{val}</span>
+            </div>
+          );
+        })}
+        <div style={{
+          padding: "4px 10px", borderRadius: 3,
+          background: "rgba(45,122,58,0.08)", border: "1px solid rgba(45,122,58,0.2)",
+          fontSize: 9,
+        }}>
+          <span style={{ color: "#2d7a3a", fontWeight: 700 }}>
+            {summary.high_conviction || 0} High Conviction (5+)
+          </span>
+        </div>
+        {(summary.tier1_count > 0 || summary.tier2_count > 0) && (
+          <>
+            {summary.tier1_count > 0 && (
+              <div style={{
+                padding: "4px 10px", borderRadius: 3,
+                background: "rgba(45,122,58,0.12)", border: "1px solid rgba(45,122,58,0.3)",
+                fontSize: 9,
+              }}>
+                <span style={{ color: "#2d7a3a", fontWeight: 700 }}>
+                  {summary.tier1_count} Tier 1
+                </span>
+              </div>
+            )}
+            {summary.tier2_count > 0 && (
+              <div style={{
+                padding: "4px 10px", borderRadius: 3,
+                background: "rgba(255,109,0,0.12)", border: "1px solid rgba(255,109,0,0.3)",
+                fontSize: 9,
+              }}>
+                <span style={{ color: "#ff6d00", fontWeight: 700 }}>
+                  {summary.tier2_count} Tier 2
+                </span>
+              </div>
+            )}
+          </>
+        )}
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+          <button onClick={triggerScan} style={{
+            fontSize: 9, padding: "3px 10px", cursor: "pointer",
+            background: "var(--bg3)", border: "1px solid var(--border)",
+            color: "var(--text2)", borderRadius: 2,
+          }}>Run EP Scan</button>
+          <button onClick={fetchData} style={{
+            fontSize: 9, padding: "3px 10px", cursor: "pointer",
+            background: "var(--bg3)", border: "1px solid var(--border)",
+            color: "var(--text2)", borderRadius: 2,
+          }}>Refresh</button>
+        </div>
+      </div>
+
+      {/* Filter controls */}
+      <div style={{
+        display: "flex", gap: 10, marginBottom: 12, padding: "8px 12px",
+        background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 3,
+        alignItems: "center", flexWrap: "wrap",
+      }}>
+        {/* Gap filter */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, fontWeight: 600 }}>MIN GAP</span>
+          {[0, 10, 30, 50, 75].map(g => (
+            <button key={g} onClick={() => setMinGap(g)} style={{
+              fontSize: 8, padding: "2px 6px", cursor: "pointer",
+              background: minGap === g ? (g >= 30 ? "rgba(45,122,58,0.15)" : "var(--accent)") : "var(--bg3)",
+              color: minGap === g ? (g >= 30 ? "#2d7a3a" : "#fff") : "var(--text3)",
+              border: `1px solid ${minGap === g ? (g >= 30 ? "rgba(45,122,58,0.4)" : "var(--accent)") : "var(--border)"}`,
+              borderRadius: 2, fontWeight: minGap === g ? 700 : 400,
+            }}>
+              {g === 0 ? "All" : `${g}%+`}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ width: 1, height: 16, background: "var(--border)" }} />
+
+        {/* Type filter */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, fontWeight: 600 }}>TYPE</span>
+          {[
+            { key: "all", label: "All" },
+            { key: "CLASSIC", label: "Classic" },
+            { key: "STORY", label: "Story" },
+            { key: "9M", label: "9M" },
+            { key: "DELAYED", label: "Delayed" },
+          ].map(t => (
+            <button key={t.key} onClick={() => setTypeFilter(t.key)} style={{
+              fontSize: 8, padding: "2px 6px", cursor: "pointer",
+              background: typeFilter === t.key ? "var(--accent)" : "var(--bg3)",
+              color: typeFilter === t.key ? "#fff" : "var(--text3)",
+              border: `1px solid ${typeFilter === t.key ? "var(--accent)" : "var(--border)"}`,
+              borderRadius: 2, fontWeight: typeFilter === t.key ? 700 : 400,
+            }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ width: 1, height: 16, background: "var(--border)" }} />
+
+        {/* MAGNA filter */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, fontWeight: 600 }}>MAGNA</span>
+          <label style={{ fontSize: 8, color: "var(--text3)", display: "flex", alignItems: "center", gap: 3 }}>
+            <input type="checkbox" checked={showAllScores}
+              onChange={e => setShowAllScores(e.target.checked)}
+              style={{ width: 10, height: 10 }} />
+            Show all
+          </label>
+          {!showAllScores && (
+            <span style={{ fontSize: 8, color: "var(--text3)" }}>{minMagna}+</span>
+          )}
+        </div>
+
+        <div style={{ marginLeft: "auto", fontSize: 8, color: "var(--text3)" }}>
+          {filteredEps.length} of {allEps.length} EPs shown
+        </div>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{ display: "flex", gap: 2, marginBottom: 14, flexWrap: "wrap" }}>
+        {subTabs.map(t => (
+          <button key={t} onClick={() => setSubTab(t)} style={{
+            fontSize: 9, padding: "4px 12px", cursor: "pointer",
+            background: t === subTab ? "var(--accent)" : "var(--bg3)",
+            color: t === subTab ? "#fff" : "var(--text2)",
+            border: `1px solid ${t === subTab ? "var(--accent)" : "var(--border)"}`,
+            borderRadius: 2, fontWeight: t === subTab ? 700 : 400,
+            textTransform: "capitalize",
+          }}>
+            {t === "9m" ? "9M Volume" : t === "volume" ? "Vol Spikes" : t}
+            {t === "overview" && ` (${filteredEps.length})`}
+            {t === "classic" && ` (${(data.classic_eps || []).length})`}
+            {t === "delayed" && ` (${(data.delayed_eps || []).length})`}
+            {t === "9m" && ` (${(data.nine_m_eps || []).length})`}
+            {t === "story" && ` (${(data.story_eps || []).length})`}
+            {t === "momentum" && ` (${(data.mom_bursts || []).length})`}
+            {t === "watchlist" && ` (${watchlist.length})`}
+            {t === "volume" && ` (${volSpikes.length})`}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      {subTab === "overview" && (() => {
+        // Separate into tradeable (Tier 1+2) and the rest
+        const tradeable = filteredEps.filter(e => e.conviction_tier > 0);
+        const rest = filteredEps.filter(e => !e.conviction_tier || e.conviction_tier === 0);
+
+        // Top 15 watchlist: rank by composite score (MAGNA * 2 + gap_pct/10 + vol_ratio/5)
+        const ranked = [...rest].sort((a, b) => {
+          const scoreA = (a.magna_score || 0) * 2 + (a.gap_pct || 0) / 10 + (a.vol_ratio || 0) / 5;
+          const scoreB = (b.magna_score || 0) * 2 + (b.gap_pct || 0) / 10 + (b.vol_ratio || 0) / 5;
+          return scoreB - scoreA;
+        });
+        const top15 = ranked.slice(0, 15);
+
+        const viewItems = tierFilter === "focused" ? [...tradeable, ...top15]
+          : tierFilter === "tradeable" ? tradeable
+          : tierFilter === "all" ? filteredEps
+          : tierFilter === "tier1" ? filteredEps.filter(e => e.conviction_tier === 1)
+          : tierFilter === "tier2" ? filteredEps.filter(e => e.conviction_tier === 2)
+          : filteredEps;
+
+        return (
+          <div>
+            {/* View mode buttons */}
+            <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center" }}>
+              {[
+                { key: "focused", label: `Focused (${tradeable.length} trade + ${top15.length} watch)` },
+                { key: "tradeable", label: `Tradeable Only (${tradeable.length})` },
+                { key: "all", label: `All (${filteredEps.length})` },
+              ].map(f => (
+                <button key={f.key} onClick={() => setTierFilter(f.key)} style={{
+                  fontSize: 8, padding: "3px 10px", cursor: "pointer",
+                  background: tierFilter === f.key ? "var(--accent)" : "var(--bg3)",
+                  color: tierFilter === f.key ? "#fff" : "var(--text3)",
+                  border: `1px solid ${tierFilter === f.key ? "var(--accent)" : "var(--border)"}`,
+                  borderRadius: 2, fontWeight: tierFilter === f.key ? 700 : 400,
+                }}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Tradeable section */}
+            {(tierFilter === "focused" || tierFilter === "tradeable") && (
+              <div style={{ marginBottom: tradeable.length > 0 ? 16 : 0 }}>
+                {tradeable.length > 0 ? (
+                  <>
+                    <div style={{
+                      fontSize: 9, fontWeight: 700, color: "#2d7a3a", letterSpacing: 1,
+                      marginBottom: 8, padding: "4px 0",
+                      borderBottom: "1px solid rgba(45,122,58,0.2)",
+                    }}>
+                      TRADEABLE ({tradeable.length})
+                    </div>
+                    {tradeable.map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
+                  </>
+                ) : (
+                  <div style={{
+                    padding: "12px 14px", marginBottom: 12, borderRadius: 3, fontSize: 10,
+                    background: "rgba(45,122,58,0.04)", border: "1px solid rgba(45,122,58,0.15)",
+                    color: "var(--text3)",
+                  }}>
+                    No Tier 1/2 setups today. Tier 1 (gap 30%+ micro-cap) triggers ~2x/month.
+                    Tier 2 (gap 50%+ STORY) triggers ~1x/month. This is normal.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Top watchlist section */}
+            {tierFilter === "focused" && top15.length > 0 && (
+              <div>
+                <div style={{
+                  fontSize: 9, fontWeight: 700, color: "var(--text3)", letterSpacing: 1,
+                  marginBottom: 8, padding: "4px 0",
+                  borderBottom: "1px solid var(--border)",
+                }}>
+                  TOP WATCHLIST ({top15.length}) — ranked by MAGNA + gap + volume
+                </div>
+                {top15.map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
+              </div>
+            )}
+
+            {/* All view */}
+            {tierFilter === "all" && (
+              viewItems.length === 0 ? (
+                <div style={{ padding: 40, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
+                  No EP setups detected matching current filters.
+                  {data.status === "no_data" && " Run an EP scan to populate."}
+                </div>
+              ) : (
+                viewItems.map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)
+              )
+            )}
+          </div>
+        );
+      })()}
+
+      {subTab === "classic" && (
+        <div>
+          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
+            background: "rgba(255,152,0,0.06)", border: "1px solid rgba(255,152,0,0.2)", borderRadius: 3 }}>
+            <strong>Classic EP:</strong> Earnings/sales catalyst + gap up 10%+ + volume 2x+ average.
+            Highest conviction when MAGNA score is 5+.
+          </div>
+          {(data.classic_eps || []).map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
+          {(data.classic_eps || []).length === 0 && (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>No Classic EPs detected today.</div>
+          )}
+        </div>
+      )}
+
+      {subTab === "delayed" && (
+        <div>
+          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
+            background: "rgba(41,98,255,0.06)", border: "1px solid rgba(41,98,255,0.2)", borderRadius: 3 }}>
+            <strong>Delayed EP:</strong> Classic EP 5-30 days ago, consolidated (pulled back &lt;50% of gap move),
+            now breaking above EP day high on above-average volume.
+          </div>
+          {(data.delayed_eps || []).map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
+          {(data.delayed_eps || []).length === 0 && (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>No Delayed EPs detected. Check the Watchlist tab for candidates consolidating.</div>
+          )}
+        </div>
+      )}
+
+      {subTab === "9m" && (
+        <div>
+          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
+            background: "rgba(156,39,176,0.06)", border: "1px solid rgba(156,39,176,0.2)", borderRadius: 3 }}>
+            <strong>9M EP:</strong> Stock trades 9 million+ shares in a single day (or 3x its 50-day average volume).
+            No fundamental catalyst required — pure volume signal.
+          </div>
+          {(data.nine_m_eps || []).map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
+          {(data.nine_m_eps || []).length === 0 && (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>No 9M EP signals today.</div>
+          )}
+        </div>
+      )}
+
+      {subTab === "story" && (
+        <div>
+          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
+            background: "rgba(255,87,34,0.06)", border: "1px solid rgba(255,87,34,0.2)", borderRadius: 3 }}>
+            <strong>Story EP (Sugar Baby):</strong> Gap up 10%+ on news/hype WITHOUT strong fundamental backing.
+            Momentum plays only — tight stops, don't hold.
+          </div>
+          {(data.story_eps || []).map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
+          {(data.story_eps || []).length === 0 && (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>No Story EPs detected today.</div>
+          )}
+        </div>
+      )}
+
+      {subTab === "momentum" && (
+        <div>
+          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
+            background: "rgba(0,150,136,0.06)", border: "1px solid rgba(0,150,136,0.2)", borderRadius: 3 }}>
+            <strong>Momentum Burst:</strong> Stock in established uptrend, pulls back to 10/20 EMA on low volume,
+            then breaks out of 3-5 day tight consolidation on increasing volume.
+          </div>
+          {(data.mom_bursts || []).map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
+          {(data.mom_bursts || []).length === 0 && (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>No Momentum Burst setups detected today.</div>
+          )}
+        </div>
+      )}
+
+      {subTab === "watchlist" && (() => {
+        // Add breakout proximity and sort by it (closest to breakout first)
+        const enrichedWatchlist = watchlist.map(w => {
+          const proximity = (w.ep_day_high && w.current_price)
+            ? Math.round((w.ep_day_high - w.current_price) / w.ep_day_high * 1000) / 10
+            : 999;
+          return { ...w, breakout_proximity: proximity };
+        }).sort((a, b) => a.breakout_proximity - b.breakout_proximity);
+
+        const nearBreakout = enrichedWatchlist.filter(w => w.breakout_proximity <= 5);
+
+        return (
+          <div>
+            <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
+              background: "rgba(41,98,255,0.06)", border: "1px solid rgba(41,98,255,0.2)", borderRadius: 3 }}>
+              <strong>EP Watchlist:</strong> Tracks Classic and 9M EPs for delayed breakout entries.
+              Sorted by proximity to EP day high breakout. Auto-removed after 30 days.
+              {nearBreakout.length > 0 && (
+                <span style={{ color: "#2d7a3a", fontWeight: 700 }}>
+                  {" "}{nearBreakout.length} stock{nearBreakout.length > 1 ? "s" : ""} within 5% of breakout!
+                </span>
+              )}
+            </div>
+            {enrichedWatchlist.length === 0 ? (
+              <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
+                No active EP watchlist entries. Classic and 9M EPs are automatically tracked.
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                      {["Ticker", "Type", "EP Date", "Days", "EP High", "Current", "To Breakout", "Consol Depth", "vs EP Close", "MAGNA"].map(h => (
+                        <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 8,
+                          color: "var(--text3)", letterSpacing: 1, fontWeight: 600 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {enrichedWatchlist.map(w => {
+                      const isNear = w.breakout_proximity <= 5;
+                      const isAbove = w.breakout_proximity <= 0;
+                      return (
+                        <tr key={w.ticker + w.ep_date} style={{
+                          borderBottom: "1px solid var(--border)",
+                          background: isAbove ? "rgba(45,122,58,0.06)" : isNear ? "rgba(255,152,0,0.04)" : "transparent",
+                        }}>
+                          <td style={{ padding: "6px 8px", fontWeight: 700 }}>
+                            <TVLink ticker={w.ticker}>{w.ticker}</TVLink>
+                            {isAbove && <span style={{ fontSize: 7, fontWeight: 700, color: "#2d7a3a", marginLeft: 4 }}>BREAKOUT</span>}
+                            {isNear && !isAbove && <span style={{ fontSize: 7, fontWeight: 700, color: "#ff9800", marginLeft: 4 }}>NEAR</span>}
+                          </td>
+                          <td style={{ padding: "6px 8px" }}>
+                            <EPTypeBadge type={w.ep_type} />
+                          </td>
+                          <td style={{ padding: "6px 8px", color: "var(--text3)" }}>{w.ep_date}</td>
+                          <td style={{ padding: "6px 8px", fontWeight: 600 }}>{w.days_watched}d</td>
+                          <td style={{ padding: "6px 8px" }}>${w.ep_day_high?.toFixed(2)}</td>
+                          <td style={{ padding: "6px 8px", fontWeight: 600 }}>${w.current_price?.toFixed(2)}</td>
+                          <td style={{
+                            padding: "6px 8px", fontWeight: 700,
+                            color: isAbove ? "#2d7a3a" : isNear ? "#ff9800" : "var(--text)",
+                          }}>
+                            {w.breakout_proximity <= 0 ? "ABOVE" : `${w.breakout_proximity}%`}
+                          </td>
+                          <td style={{
+                            padding: "6px 8px", fontWeight: 600,
+                            color: (w.consolidation_depth || 0) > 15 ? "var(--red)" : "var(--text)",
+                          }}>
+                            {w.consolidation_depth != null ? `-${w.consolidation_depth}%` : "—"}
+                          </td>
+                          <td style={{
+                            padding: "6px 8px", fontWeight: 600,
+                            color: (w.pct_vs_ep_close || 0) >= 0 ? "var(--green)" : "var(--red)",
+                          }}>
+                            {w.pct_vs_ep_close != null ? `${w.pct_vs_ep_close > 0 ? "+" : ""}${w.pct_vs_ep_close}%` : "—"}
+                          </td>
+                          <td style={{ padding: "6px 8px" }}>
+                            <MagnaScoreBadge score={w.magna_score || 0} size="small" />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {subTab === "volume" && (
+        <div>
+          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
+            background: "rgba(156,39,176,0.06)", border: "1px solid rgba(156,39,176,0.2)", borderRadius: 3 }}>
+            <strong>Volume Spike Scanner:</strong> Stocks trading 3x+ their 50-day average volume or 9M+ shares.
+            Sorted by volume ratio. These are potential 9M EP candidates.
+          </div>
+          {volSpikes.length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
+              No volume spikes detected today.
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                    {["Ticker", "Price", "Chg %", "Volume", "Avg 50d", "Vol Ratio", "9M+", "Catalyst"].map(h => (
+                      <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 8,
+                        color: "var(--text3)", letterSpacing: 1, fontWeight: 600 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {volSpikes.slice(0, 50).map(v => (
+                    <tr key={v.ticker} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td style={{ padding: "6px 8px", fontWeight: 700 }}>
+                        <TVLink ticker={v.ticker}>{v.ticker}</TVLink>
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>${v.price?.toFixed(2)}</td>
+                      <td style={{
+                        padding: "6px 8px", fontWeight: 600,
+                        color: (v.chg_pct || 0) >= 0 ? "var(--green)" : "var(--red)",
+                      }}>
+                        {v.chg_pct > 0 ? "+" : ""}{v.chg_pct}%
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>{(v.volume / 1e6).toFixed(1)}M</td>
+                      <td style={{ padding: "6px 8px", color: "var(--text3)" }}>{(v.adv_50 / 1e6).toFixed(1)}M</td>
+                      <td style={{ padding: "6px 8px", fontWeight: 700, color: v.vol_ratio >= 5 ? "#9c27b0" : "var(--accent)" }}>
+                        {v.vol_ratio}x
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>
+                        {v.is_9m ? (
+                          <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 2,
+                            background: "rgba(156,39,176,0.12)", color: "#9c27b0" }}>9M+</span>
+                        ) : "—"}
+                      </td>
+                      <td style={{ padding: "6px 8px", fontSize: 9, color: "var(--text3)", maxWidth: 200 }}>
+                        {v.catalyst}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2894,7 +3588,8 @@ export default function App({ onQuickAdd }) {
       <div style={{ fontSize:10, color:"var(--text3)" }}>Fetching from backend...</div>
     </div>
   );
-  const tabs = ["Market", "Longs", "EP", "Shorts", "All Stocks", "Pipeline", "Replay", "Correlation", "Watchlist"];
+  const tabs = ["Market", "EP Dash"];
+  // Hidden tabs (code preserved): "Focus", "Weekly", "Longs", "EP", "Shorts", "All Stocks", "Pipeline", "Replay", "Correlation", "Watchlist"
 
   return (
     <>
@@ -2906,7 +3601,7 @@ export default function App({ onQuickAdd }) {
           <div className="hdr-left">
             <span className="hdr-logo">SIGNAL DESK</span>
             <div>
-              <div className="hdr-sub">MA BOUNCE · SHORT SETUP · MOMENTUM SCREENER</div>
+              <div className="hdr-sub">EPISODIC PIVOT SCANNER</div>
             </div>
           </div>
           <div className="hdr-meta">
@@ -2933,22 +3628,6 @@ export default function App({ onQuickAdd }) {
           <IndexChip name="NASDAQ" chg={data.nasdaq.chg} above21ema={data.nasdaq.above21ema} />
           <IndexChip name="S&P 500" chg={data.sp500.chg} above21ema={data.sp500.above21ema} />
           <div className="mkt-chip">
-            <span className="mkt-chip-label">MA10 BOUNCES</span>
-            <span style={{ color: "var(--cyan)", fontWeight: 700 }}>{data.ma10Bounces.length}</span>
-          </div>
-          <div className="mkt-chip">
-            <span className="mkt-chip-label">MA21 BOUNCES</span>
-            <span style={{ color: "var(--purple)", fontWeight: 700 }}>{data.ma21Bounces.length}</span>
-          </div>
-          <div className="mkt-chip">
-            <span className="mkt-chip-label">MA50 BOUNCES</span>
-            <span style={{ color: "var(--yellow)", fontWeight: 700 }}>{data.ma50Bounces.length}</span>
-          </div>
-          <div className="mkt-chip">
-            <span className="mkt-chip-label">TOP SHORTS</span>
-            <span style={{ color: "var(--red)", fontWeight: 700 }}>{data.topShorts.length}</span>
-          </div>
-          <div className="mkt-chip">
             <span className="mkt-chip-label">EP SETUPS</span>
             <span style={{ color: "#ff9800", fontWeight: 700 }}>
               {(data.epSignals || []).filter(s => s.ep_entry_ok).length}
@@ -2967,7 +3646,7 @@ export default function App({ onQuickAdd }) {
               className={`tab ${t === tab ? "active" : ""} ${t === "Shorts" ? "tab-short" : ""}`}
               onClick={() => setTab(t)}
             >
-              {t === "Shorts" ? "▼ " : t === "Longs" ? "▲ " : t === "Market" ? "◈ " : t === "EP" ? "⚡ " : t === "Replay" ? "⏪ " : t === "Pipeline" ? "◎ " : t === "Correlation" ? "📊 " : t === "Watchlist" ? "📋 " : ""}{t}
+              {t === "Shorts" ? "▼ " : t === "Longs" ? "▲ " : t === "Market" ? "◈ " : t === "Focus" ? "🎯 " : t === "Weekly" ? "📅 " : t === "EP" ? "⚡ " : t === "EP Dash" ? "🔥 " : t === "Replay" ? "⏪ " : t === "Pipeline" ? "◎ " : t === "Correlation" ? "📊 " : t === "Watchlist" ? "📋 " : ""}{t}
             </div>
           ))}
         </div>
@@ -2975,8 +3654,11 @@ export default function App({ onQuickAdd }) {
         {/* Body */}
         <div className="body">
           {tab === "Market" && <MarketTab data={data} />}
+          {tab === "Focus" && <FocusTab data={data} onQuickAdd={onQuickAdd} />}
+          {tab === "Weekly" && <WeeklyTab onQuickAdd={onQuickAdd} />}
           {tab === "Longs" && <LongsTab data={data} onQuickAdd={onQuickAdd} />}
           {tab === "EP" && <EPTab data={data} onQuickAdd={onQuickAdd} />}
+          {tab === "EP Dash" && <StockbeeEPDashboard onQuickAdd={onQuickAdd} />}
           {tab === "Shorts" && <ShortsTab data={data} />}
           {tab === "All Stocks" && <AllStocksTab data={data} />}
           {tab === "Pipeline" && <Pipeline />}

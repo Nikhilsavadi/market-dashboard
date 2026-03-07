@@ -1,10 +1,17 @@
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-pandas==2.2.2
-numpy==1.26.4
-apscheduler==3.10.4
-requests==2.31.0
-python-dotenv==1.0.1
-pydantic==2.7.1
-yfinance==1.2.0
-httpx==0.27.0
+# Market Dashboard — Backend Requirements
+# Install with: pip install -r requirements.txt
+
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+pydantic==2.7.4
+
+# ── Scheduler ────────────────────────────────────────────────────────────────
+APScheduler==3.10.4
+
+# ── Data & numerics ──────────────────────────────────────────────────────────
+pandas==2.2.3
+numpy==2.1.0
+yfinance==0.2.40
+requests==2.32.3
+urllib3==2.2.3

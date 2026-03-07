@@ -546,6 +546,18 @@ def _run_scan_inner() -> dict:
     print(f"[scanner] EP setups: {len(ep_signals)} detected "
           f"({sum(1 for s in ep_signals if s.get('ep_entry_ok'))} entry-ready)")
 
+    # HVE Retest setups
+    hve_signals = sorted(
+        [s for s in raw_results if s.get("hve_detected")],
+        key=lambda s: (
+            -int(s.get("hve_entry_ok", False)),       # entry-ready first
+            s.get("hve_days_since_gap") or 999,       # most recent gap first
+            -(s.get("hve_gap_pct") or 0),             # largest gap first
+        )
+    )
+    print(f"[scanner] HVE retest setups: {len(hve_signals)} detected "
+          f"({sum(1 for s in hve_signals if s.get('hve_entry_ok'))} entry-ready)")
+
     # "Setup of the Day" — highest scoring non-duplicate
     non_dup_longs = [s for s in long_signals if not s.get("is_duplicate")]
     sotd_long  = non_dup_longs[0] if non_dup_longs else None
@@ -594,13 +606,46 @@ def _run_scan_inner() -> dict:
         "weekly_bo_retest_signals":   weekly_bo_retest_signals[:30],
         "pattern_signals":   pattern_signals[:40],
         "ep_signals":        ep_signals[:40],
+        "hve_signals":       hve_signals[:40],
         "all_stocks":        sorted(raw_results, key=lambda s: -(s.get("rs") or 0)),
         "settings":          settings,
     }
 
+    # 16b. Stockbee EP scan — runs in same scan cycle using existing bars
+    try:
+        from stockbee_ep import (
+            run_ep_scan, fetch_fundamentals_batch,
+            init_ep_watchlist_table, update_ep_watchlist
+        )
+        init_ep_watchlist_table()
+
+        # Fetch fundamentals for EP candidates (stocks with gaps or high volume)
+        ep_candidate_tickers = list(set(
+            [s["ticker"] for s in ep_signals[:20]] +
+            [s["ticker"] for s in raw_results
+             if s.get("vol_ratio") and s["vol_ratio"] >= 2.0][:30]
+        ))
+        print(f"[scanner] Fetching fundamentals for {len(ep_candidate_tickers)} EP candidates...")
+        ep_fund = fetch_fundamentals_batch(ep_candidate_tickers, delay=0.15)
+
+        # Run full EP scan
+        ep_result = run_ep_scan(bars_data, ep_fund)
+        payload["stockbee_ep"] = ep_result
+
+        # Update EP watchlist with current prices
+        ep_alerts = update_ep_watchlist(bars_data)
+        if ep_alerts:
+            print(f"[scanner] EP Watchlist alerts: {len(ep_alerts)} breakout signals!")
+            payload["stockbee_ep"]["watchlist_alerts"] = ep_alerts
+
+        print(f"[scanner] Stockbee EP scan: {ep_result.get('summary', {})}")
+    except Exception as e:
+        print(f"[scanner] Stockbee EP scan error: {e}")
+        import traceback; traceback.print_exc()
+
     # 17. Write cache
     CACHE_FILE.write_text(json.dumps(payload, indent=2, default=str))
-    print(f"[scanner] Cache written → {CACHE_FILE}")
+    print(f"[scanner] Cache written -> {CACHE_FILE}")
 
     # 17b. Update watchlist tracker with today's long signals
     try:
@@ -649,7 +694,7 @@ def run_replay(as_of_date: str) -> dict:
     client = get_alpaca_client()
     stock_tickers = [t for t in ALL_TICKERS if t not in ALL_ETFS]
 
-    print(f"[replay] Fetching daily bars {lookback_start} → {cutoff_str}...")
+    print(f"[replay] Fetching daily bars {lookback_start} -> {cutoff_str}...")
     import os as _os
     if _os.environ.get("POLYGON_API_KEY"):
         try:
@@ -671,7 +716,7 @@ def run_replay(as_of_date: str) -> dict:
             interval="1d", min_rows=20, batch_size=50, label="replay",
         )
 
-    print(f"[replay] Fetching weekly bars {weekly_start} → {cutoff_str}...")
+    print(f"[replay] Fetching weekly bars {weekly_start} -> {cutoff_str}...")
     if _os.environ.get("POLYGON_API_KEY"):
         try:
             from polygon_client import fetch_bars_batch_polygon

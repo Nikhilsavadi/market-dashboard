@@ -911,7 +911,8 @@ export default function BacktestApp() {
 
   // Trigger reconstruction
   const triggerReconstruct = async (days) => {
-    const ok = window.confirm(`Run ${days}-day historical reconstruction? This takes 20-60 mins in the background.`);
+    const estimate = days <= 10 ? "~5 mins" : days <= 90 ? "~1.5 hours" : days <= 180 ? "~3 hours" : "~8 hours";
+    const ok = window.confirm(`Run ${days}-day historical reconstruction? This takes ${estimate} in the background.`);
     if (!ok) return;
     await api(`/api/backtest/reconstruct?secret=${TRIGGER_SECRET}&lookback_days=${days}`, { method: "POST" });
     alert("Reconstruction started. Check status bar for progress.");
@@ -1062,6 +1063,7 @@ export default function BacktestApp() {
                 </div>
               )}
               <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                <button className="btn wide" onClick={() => triggerReconstruct(10)}>Run 10 Days</button>
                 <button className="btn wide" onClick={() => triggerReconstruct(90)}>Run 90 Days</button>
                 <button className="btn wide" onClick={() => triggerReconstruct(180)}>Run 180 Days</button>
                 <button className="btn wide" onClick={() => triggerReconstruct(365)}>Run Full Year</button>
@@ -1098,6 +1100,72 @@ export default function BacktestApp() {
                 </span>
               )}
             </div>
+
+            {/* Regime gate comparison banner */}
+            {analysis?.regime_summary && (
+              <div style={{ margin: "0 0 12px 0", borderRadius: 6, border: "1px solid rgba(124,77,255,0.3)",
+                background: "rgba(124,77,255,0.06)", padding: "10px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#7c4dff", letterSpacing: 1 }}>
+                    🚦 REGIME GATE — market_score ≥ {analysis.regime_summary.gate_threshold} (NEUTRAL+)
+                  </span>
+                  <span style={{ fontSize: 9, color: "var(--text2)", marginLeft: "auto" }}>
+                    {analysis.regime_summary.filtered_signals} of {analysis.regime_summary.total_signals} signals filtered ({analysis.regime_summary.filter_pct}%)
+                  </span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  {/* All signals */}
+                  <div style={{ background: "rgba(0,0,0,0.2)", borderRadius: 4, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 9, color: "var(--text2)", marginBottom: 6, letterSpacing: 1 }}>
+                      ALL SIGNALS (unfiltered) · {analysis.total_trades} trades
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                      {[
+                        ["Win Rate", `${num(stats?.win_rate, 1)}%`, (stats?.win_rate||0) >= 50 ? "#4ade80" : "#f87171"],
+                        ["Avg R",    `${num(stats?.avg_pnl_r)}R`,   (stats?.avg_pnl_r||0) >= 0.5 ? "#4ade80" : "#f87171"],
+                        ["Sharpe",  num(stats?.sharpe),             (stats?.sharpe||0) >= 0 ? "#4ade80" : "#f87171"],
+                        ["Avg Ret",  pct(stats?.avg_pnl_pct),       (stats?.avg_pnl_pct||0) >= 0 ? "#4ade80" : "#f87171"],
+                        ["PF",      num(stats?.profit_factor),      (stats?.profit_factor||0) >= 1 ? "#4ade80" : "#f87171"],
+                        ["Worst",   pct(stats?.worst_trade_pct),    "#f87171"],
+                      ].map(([l, v, c]) => (
+                        <div key={l} style={{ textAlign: "center" }}>
+                          <div style={{ fontSize: 8, color: "var(--text2)" }}>{l}</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: c, fontFamily: "monospace" }}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Regime-gated signals */}
+                  <div style={{ background: "rgba(74,222,128,0.06)", borderRadius: 4, padding: "8px 10px",
+                    border: "1px solid rgba(74,222,128,0.2)" }}>
+                    <div style={{ fontSize: 9, color: "#4ade80", marginBottom: 6, letterSpacing: 1 }}>
+                      ✓ REGIME GATED · {analysis.gated_trades} trades
+                    </div>
+                    {analysis.gated_stats ? (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                        {[
+                          ["Win Rate", `${num(analysis.gated_stats.win_rate, 1)}%`, (analysis.gated_stats.win_rate||0) >= 50 ? "#4ade80" : "#f87171"],
+                          ["Avg R",    `${num(analysis.gated_stats.avg_pnl_r)}R`,   (analysis.gated_stats.avg_pnl_r||0) >= 0.5 ? "#4ade80" : "#f87171"],
+                          ["Sharpe",  num(analysis.gated_stats.sharpe),             (analysis.gated_stats.sharpe||0) >= 0 ? "#4ade80" : "#f87171"],
+                          ["Avg Ret",  pct(analysis.gated_stats.avg_pnl_pct),       (analysis.gated_stats.avg_pnl_pct||0) >= 0 ? "#4ade80" : "#f87171"],
+                          ["PF",      num(analysis.gated_stats.profit_factor),      (analysis.gated_stats.profit_factor||0) >= 1 ? "#4ade80" : "#f87171"],
+                          ["Worst",   pct(analysis.gated_stats.worst_trade_pct),    "#f87171"],
+                        ].map(([l, v, c]) => (
+                          <div key={l} style={{ textAlign: "center" }}>
+                            <div style={{ fontSize: 8, color: "var(--text2)" }}>{l}</div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: c, fontFamily: "monospace" }}>{v}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 10, color: "var(--text2)", textAlign: "center", paddingTop: 8 }}>
+                        No gated trades — re-run reconstruction to populate.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Stat cards */}
             {loading ? (

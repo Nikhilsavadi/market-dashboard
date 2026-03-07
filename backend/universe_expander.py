@@ -441,19 +441,26 @@ def _is_valid_ticker(t: str) -> bool:
     - SHORT_VOLUME suffixes (FINRA short sale data)
     - Warrants, rights, units (common suffixes)
     - Tickers longer than 5 chars with underscores (usually data indices)
+    - Permanently excluded tickers (consistently fail or return bad data)
     """
     if not t or not isinstance(t, str):
         return False
     t = t.strip().upper()
+
+    # Permanently excluded — consistently fail API calls or return corrupt data
+    _PERMANENT_EXCLUDE = {
+        "SNDK", "DPSI", "EIDX", "EPZM", "FMTX", "FWBI", "LBPH", "MORF",
+        "ORPH", "PNTM",
+    }
+    if t in _PERMANENT_EXCLUDE:
+        return False
+
     # FINRA short sale volume symbols
     if "_SHORT_VOLUME" in t or t.endswith("_SV"):
         return False
     # Other underscore-suffixed data symbols
     if "_" in t and len(t) > 5:
         return False
-    # Warrants / rights / units — common suffixes
-    if t.endswith(("W", "R", "U", "WS")) and len(t) > 4:
-        pass  # some legit tickers end in W/R, don't over-filter
     # Too long to be a real stock ticker
     if len(t) > 6:
         return False
@@ -500,7 +507,7 @@ def reload_dynamic_tickers() -> int:
                 wl.TICKER_TIER[t] = 2
                 added += 1
         if added:
-            print(f"[expander] Merged {added} dynamic tickers → "
+            print(f"[expander] Merged {added} dynamic tickers -> "
                   f"universe now {len(wl.ALL_TICKERS)}")
         return added
     except Exception as e:
