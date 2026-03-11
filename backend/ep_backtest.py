@@ -812,8 +812,24 @@ def run_ep_backtest_from_scan(lookback_days: int = 365) -> dict:
     else:
         bars = fetch_bars(client, stock_tickers)
 
-    print(f"[ep-bt] Running backtest over {lookback_days} days...")
+    print(f"[ep-bt] Got bars for {len(bars)} stocks, running backtest over {lookback_days} days...")
     result = backtest_eps(bars, lookback_days=lookback_days)
     print(f"[ep-bt] Complete: {result['total_trades']} trades from {result['total_events']} EP events")
 
-    return result
+    # Convert numpy types to native Python for JSON serialization
+    def _sanitize(obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, dict):
+            return {k: _sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize(v) for v in obj]
+        return obj
+
+    return _sanitize(result)

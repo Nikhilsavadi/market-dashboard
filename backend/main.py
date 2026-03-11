@@ -3159,17 +3159,30 @@ def trigger_ep_backtest(secret: str = "", lookback_days: int = 365):
 
     def _run():
         try:
+            # Mark as running
+            cache = read_cache()
+            cache["ep_backtest_status"] = {"status": "running", "started": str(datetime.now())}
+            CACHE_FILE.write_text(json.dumps(cache, indent=2, default=str))
+
             from ep_backtest import run_ep_backtest_from_scan
             result = run_ep_backtest_from_scan(lookback_days=lookback_days)
 
-            # Save to cache
+            # Save to cache (strip all_trades to keep cache small)
             cache = read_cache()
-            cache["ep_backtest"] = result
+            cache["ep_backtest"] = {k: v for k, v in result.items() if k != "all_trades"}
+            cache["ep_backtest"]["total_all_trades"] = len(result.get("all_trades", []))
+            cache["ep_backtest_status"] = {"status": "done", "finished": str(datetime.now())}
             CACHE_FILE.write_text(json.dumps(cache, indent=2, default=str))
             print(f"[ep-bt] Saved to cache: {result['total_trades']} trades")
         except Exception as e:
             print(f"[ep-bt] Error: {e}")
             import traceback; traceback.print_exc()
+            try:
+                cache = read_cache()
+                cache["ep_backtest_status"] = {"status": "error", "error": str(e)}
+                CACHE_FILE.write_text(json.dumps(cache, indent=2, default=str))
+            except Exception:
+                pass
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
@@ -3185,11 +3198,13 @@ def get_ep_backtest_results():
     """Get results from the last EP backtest run."""
     try:
         cache = read_cache()
+        bt_status = cache.get("ep_backtest_status", {})
         bt = cache.get("ep_backtest")
         if not bt:
             return {
-                "status": "no_data",
-                "message": "No EP backtest results yet. Trigger one via POST /api/ep-dashboard/backtest",
+                "status": bt_status.get("status", "no_data"),
+                "message": bt_status.get("error") or "No EP backtest results yet. Trigger one via POST /api/ep-dashboard/backtest",
+                **{k: v for k, v in bt_status.items() if k not in ("status", "error")},
             }
         # Don't send all_trades in the summary endpoint (too large)
         summary = {k: v for k, v in bt.items() if k != "all_trades"}
