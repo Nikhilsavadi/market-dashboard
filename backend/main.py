@@ -3101,6 +3101,14 @@ def trigger_ep_scan(secret: str = ""):
             CACHE_FILE.write_text(json.dumps(cache, indent=2, default=str))
 
             print(f"[ep-scan] Complete: {result['summary']}")
+
+            # Send EP alert to Telegram
+            try:
+                from alerts import send_ep_alert
+                send_ep_alert(result)
+                print("[ep-scan] Telegram alert sent")
+            except Exception as alert_err:
+                print(f"[ep-scan] Telegram alert failed: {alert_err}")
         except Exception as e:
             print(f"[ep-scan] Error: {e}")
             import traceback; traceback.print_exc()

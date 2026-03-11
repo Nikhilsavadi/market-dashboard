@@ -226,6 +226,135 @@ def send_scan_alert(payload: dict, open_tickers: set = None):
         _send("\n".join(short_lines))
 
 
+def send_ep_alert(ep_result: dict):
+    """Send EP scan results to Telegram — replaces old Signal Desk format."""
+    summary = ep_result.get("summary", {})
+    breadth = ep_result.get("sp500_breadth", {})
+    bear_regime = ep_result.get("bear_regime", False)
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+    regime = breadth.get("regime", "NEUTRAL")
+    regime_emoji = {"BULLISH": "🟢", "NEUTRAL": "🟡", "BEARISH": "🔴"}.get(regime, "🟡")
+    breadth_pct = breadth.get("pct_above_50ma")
+    breadth_str = f" ({breadth_pct:.0f}%)" if breadth_pct is not None else ""
+
+    # ── Header ──
+    lines = [
+        f"<b>📊 EP SCANNER — {now}</b>",
+        f"{regime_emoji} Market: <b>{regime}</b>{breadth_str}",
+    ]
+    if bear_regime:
+        lines.append("⚠️ <b>BEAR REGIME</b> — shorts promoted, longs selective only")
+    guidance = breadth.get("trade_guidance")
+    if guidance and not bear_regime:
+        lines.append(f"💡 {guidance}")
+
+    total_long = summary.get("total_long_eps", 0)
+    total_short = summary.get("total_short_eps", 0)
+    actionable = summary.get("actionable", 0)
+    lines.append(f"Found: {total_long} long · {total_short} short · {actionable} actionable")
+
+    _send("\n".join(lines))
+
+    # ── Actionable Long EPs (tiers 1-3) ──
+    actionable_eps = ep_result.get("actionable_eps", [])
+    if actionable_eps:
+        long_lines = [f"\n<b>▲ LONG EPs — {len(actionable_eps)} actionable</b>"]
+        for s in actionable_eps[:5]:
+            long_lines.append(_format_ep_long(s))
+        _send("\n".join(long_lines))
+
+    # ── Short EPs ──
+    short_eps = ep_result.get("all_short_eps", [])
+    if short_eps:
+        short_lines = [f"\n<b>🔻 SHORT EPs — {len(short_eps)} found</b>"]
+        for s in short_eps[:5]:
+            short_lines.append(_format_ep_short(s))
+        _send("\n".join(short_lines))
+
+    # If nothing actionable at all
+    if not actionable_eps and not short_eps:
+        _send("No actionable EP setups today. Watchlist only.")
+
+
+def _format_ep_long(s: dict) -> str:
+    """Format a single long EP signal for Telegram."""
+    ticker = s.get("ticker", "")
+    price = s.get("price", 0)
+    ep_type = s.get("ep_type", "")
+    tier_label = s.get("tier_label", "")
+    tier_sizing = s.get("tier_sizing", "")
+    gap_pct = s.get("ep_gap_pct") or s.get("gap_pct", 0)
+    vol_ratio = s.get("ep_vol_ratio") or s.get("vol_ratio", 0)
+    magna = s.get("magna_score", 0)
+    ti65 = s.get("ti65_label", "")
+    tt_score = s.get("tt_score", 0)
+
+    intel = s.get("entry_intel", {})
+    zone_lo = intel.get("entry_zone_low")
+    zone_hi = intel.get("entry_zone_high")
+    stop = intel.get("stop_price")
+    r1 = (intel.get("r_levels") or {}).get("r1")
+    quality = intel.get("entry_quality", "")
+
+    # Tier emoji
+    tier_emoji = {"MAX BET": "🥇", "STRONG": "🥈", "NORMAL": "🥉"}.get(tier_label, "")
+
+    line = f"\n{tier_emoji} <b>{ticker}</b> ${price:.2f} | {ep_type} | {tier_label} ({tier_sizing})"
+    line += f"\n  Gap {gap_pct:+.0f}% · Vol {vol_ratio:.0f}x · MAGNA {magna}/7"
+
+    if ti65 and ti65 != "N/A":
+        line += f" · TI65 {ti65}"
+    if tt_score >= 3:
+        line += f" · TT {tt_score}/7"
+
+    if zone_lo and zone_hi and stop:
+        line += f"\n  Entry: ${zone_lo}-${zone_hi} | Stop: ${stop:.2f}"
+        if r1:
+            line += f" | T1: ${r1:.2f}"
+    if quality:
+        line += f" | {quality}"
+
+    return line
+
+
+def _format_ep_short(s: dict) -> str:
+    """Format a single short EP signal for Telegram."""
+    ticker = s.get("ticker", "")
+    price = s.get("price", 0)
+    ep_type = s.get("ep_type", "")
+    badge = s.get("ep_badge", "SHORT EP")
+    gap_pct = s.get("ep_gap_pct") or s.get("gap_pct", 0)
+    vol_ratio = s.get("ep_vol_ratio") or s.get("vol_ratio", 0)
+    magna = s.get("short_magna_score", 0)
+    catalyst = s.get("ep_catalyst_label") or s.get("catalyst_label", "")
+    catalyst_type = s.get("ep_catalyst_type") or s.get("catalyst_type", "")
+
+    intel = s.get("entry_intel", {})
+    zone_lo = intel.get("entry_zone_low")
+    zone_hi = intel.get("entry_zone_high")
+    stop = intel.get("stop_price")
+    quality = intel.get("entry_quality", "")
+
+    # Catalyst emoji
+    cat_emoji = {
+        "EARNINGS_MISS": "📉", "GUIDANCE_CUT": "📉", "DOWNGRADE": "⬇️",
+        "ACCOUNTING": "🚩", "REGULATORY": "⚖️",
+    }.get(catalyst_type, "❓")
+
+    line = f"\n🔻 <b>{ticker}</b> ${price:.2f} | {badge}"
+    line += f"\n  Gap {gap_pct:+.0f}% · Vol {vol_ratio:.0f}x · Short MAGNA {magna}/6"
+    if catalyst:
+        line += f"\n  {cat_emoji} {catalyst}"
+
+    if zone_lo and zone_hi and stop:
+        line += f"\n  Short: ${zone_lo}-${zone_hi} | Cover stop: ${stop:.2f}"
+    if quality:
+        line += f" | {quality}"
+
+    return line
+
+
 def send_journal_alert(ticker: str, action: str, details: dict):
     """Alert when a journal entry is added or closed."""
     if action == "added":
