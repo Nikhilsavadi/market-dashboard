@@ -625,6 +625,12 @@ def _detect_9m_ep(df: pd.DataFrame, cfg: dict) -> dict:
             # Try to identify catalyst
             prior_close = float(closes.iloc[i - 1]) if i > 0 else day_close
             gap_pct = (float(df["open"].iloc[i]) - prior_close) / prior_close * 100 if prior_close > 0 else 0
+
+            # Require meaningful price move — gap ≥3% OR intraday range ≥5%
+            intraday_range = (day_high - day_low) / day_low * 100 if day_low > 0 else 0
+            if abs(gap_pct) < 3 and intraday_range < 5:
+                continue
+
             catalyst = "Unknown catalyst - pure volume signal"
             if abs(gap_pct) > 5:
                 catalyst = f"Gap {'up' if gap_pct > 0 else 'down'} {abs(gap_pct):.1f}% on volume"
