@@ -389,23 +389,23 @@ def _simulate_trade_weekly_ma(df: pd.DataFrame, entry_idx: int, entry_price: flo
 def _simulate_trade_ratchet(df: pd.DataFrame, entry_idx: int, entry_price: float,
                              stop_price: float, max_hold: int = 252) -> dict:
     """
-    WINNER-DERIVED exit strategy based on reverse-engineering 100%+ EP movers.
+    HYBRID exit strategy: ratchet phases 0-3, then 10w MA trail at phase 4.
 
-    Key findings from analyzing HOOD, NVDA, PLTR, APP, AXON, TGTX, RDDT etc:
-    - Big winners tolerate 32% avg drawdown from peak (up to 36% at 75th pct)
-    - Take 130 days median to reach peak
-    - Reach +50% in ~55 days, +100% in ~95 days
-    - The 15% tight trail captured ZERO 100%+ moves
+    Reverse-engineered from 21 EP events across 12 big movers (HOOD +276%,
+    NVDA +210%, APP +540%, PLTR +250%, AXON +180%, TGTX +140%):
+    - 100%+ winners tolerate 32% avg drawdown, take 130d median to peak
+    - Ratchet alone cuts at +134% (12% trail); position MA lets CDTX run to +407%
+    - Solution: ratchet for early protection, MA trail to ride multi-baggers
 
-    Rules (ratcheting trail — tighten as gains increase):
-    Phase 0 (0-10% gain):  Initial stop (EP day low)
-    Phase 1 (10-20% gain): Move to breakeven, 25% trail from peak
-    Phase 2 (20-50% gain): 20% trail from peak
-    Phase 3 (50-100% gain): 15% trail from peak
-    Phase 4 (100%+ gain):  12% trail from peak (protect the double)
+    Phases:
+    Phase 0 (0-10% gain):    Initial stop (EP day low)
+    Phase 1 (10-20% gain):   Breakeven + 25% trail from peak
+    Phase 2 (20-50% gain):   20% trail from peak
+    Phase 3 (50-100% gain):  15% trail from peak + 10w MA secondary
+    Phase 4 (100%+ gain):    10w MA trail ONLY (let it ride), 25% hard stop catastrophe
 
-    Additionally: 10-week MA trail activates at +30% as a secondary exit
-    (whichever is HIT first — the ratchet % or MA — triggers exit).
+    The key insight: once you have a double, stop using % trails entirely and
+    let the 10-week MA trail do the work — that's how you capture 200-400% moves.
     """
     n = len(df)
     closes = df["close"]
@@ -443,9 +443,41 @@ def _simulate_trade_ratchet(df: pd.DataFrame, entry_idx: int, entry_price: float
         best_price = max(best_price, day_high)
         worst_price = min(worst_price, day_low)
 
-        # Stop hit
+        if day_close > highest_close:
+            highest_close = day_close
+
+        gain_pct = (day_close - entry_price) / entry_price * 100
+        peak_gain = (highest_close - entry_price) / entry_price * 100
+
+        # ── Phase 4: 100%+ gain → MA trail only (let runners ride) ──
+        if peak_gain >= 100:
+            phase = 4
+
+            # Hard stop: 25% from peak (catastrophe protection only)
+            hard_stop = highest_close * 0.75
+            current_stop = max(current_stop, hard_stop)
+
+            if day_low <= current_stop:
+                exit_price = current_stop
+                exit_reason = "hard_trail_p4"
+                break
+
+            # 10w MA trail: check weekly
+            if hold_days >= ma_len and hold_days % 5 == 0:
+                ma_start = max(0, i - ma_len)
+                ma_val = float(closes.iloc[ma_start:i].mean())
+                if day_close < ma_val:
+                    exit_price = day_close
+                    exit_reason = "ma_trail_p4"
+                    break
+
+            exit_price = day_close
+            continue
+
+        # ── Phases 0-3: ratcheting % trail ──
+
+        # Stop hit (ratchet or initial)
         if day_low <= current_stop:
-            exit_price = max(current_stop, day_low)  # slippage: get stop or day_low
             exit_price = current_stop
             if phase == 0:
                 exit_reason = "stop"
@@ -455,17 +487,8 @@ def _simulate_trade_ratchet(df: pd.DataFrame, entry_idx: int, entry_price: float
                 exit_reason = f"ratchet_p{phase}"
             break
 
-        if day_close > highest_close:
-            highest_close = day_close
-
-        gain_pct = (day_close - entry_price) / entry_price * 100
-        peak_gain = (highest_close - entry_price) / entry_price * 100
-
-        # Determine current phase and trail %
-        if peak_gain >= 100:
-            phase = 4
-            trail_pct = 12
-        elif peak_gain >= 50:
+        # Determine phase and trail %
+        if peak_gain >= 50:
             phase = 3
             trail_pct = 15
         elif peak_gain >= 20:
@@ -485,13 +508,13 @@ def _simulate_trade_ratchet(df: pd.DataFrame, entry_idx: int, entry_price: float
             ratchet_stop = highest_close * (1 - trail_pct / 100)
             current_stop = max(current_stop, ratchet_stop)
 
-        # Secondary: 10-week MA trail (activates at +30%, checks weekly)
-        if peak_gain >= 30 and hold_days >= ma_len and hold_days % 5 == 0:
+        # Phase 3: also check 10w MA as secondary exit (catches trend breaks)
+        if phase >= 3 and hold_days >= ma_len and hold_days % 5 == 0:
             ma_start = max(0, i - ma_len)
             ma_val = float(closes.iloc[ma_start:i].mean())
             if day_close < ma_val:
                 exit_price = day_close
-                exit_reason = "ma_trail"
+                exit_reason = "ma_trail_p3"
                 break
 
         exit_price = day_close
