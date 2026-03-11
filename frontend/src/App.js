@@ -2757,6 +2757,54 @@ function EPCard({ s, onQuickAdd }) {
             </div>
           )}
 
+          {/* Sector theme */}
+          {s.sector_theme_score >= 2 && (
+            <div style={{ fontSize: 9, color: "#ff6d00", fontWeight: 600, marginTop: 6 }}>
+              🔥 {s.sector} theme — {s.sector_theme_score} peer EPs
+            </div>
+          )}
+          {s.sector && s.sector_theme_score < 2 && (
+            <div style={{ fontSize: 8, color: "var(--text3)", marginTop: 4 }}>Sector: {s.sector}</div>
+          )}
+
+          {/* Earnings countdown */}
+          {s.days_until_earnings != null && s.days_until_earnings > 0 && (
+            <div style={{
+              fontSize: 9, marginTop: 4, fontWeight: 600,
+              color: s.days_until_earnings <= 7 ? "var(--red)" : s.days_until_earnings <= 42 ? "#ff9800" : "var(--text3)",
+            }}>
+              {s.days_until_earnings <= 7 ? "⚠️" : "📅"} Earnings in {s.days_until_earnings} days ({s.earnings_date})
+            </div>
+          )}
+
+          {/* Pyramid plan */}
+          {s.pyramid_plan && s.pyramid_plan.has_plan && (
+            <div style={{ marginTop: 8, padding: "8px 10px", background: "var(--bg)", borderRadius: 3, border: "1px solid var(--border)" }}>
+              <div style={{ fontSize: 8, fontWeight: 700, color: "var(--text3)", letterSpacing: 1, marginBottom: 4 }}>PYRAMID PLAN ({s.pyramid_plan.half_kelly_pct}% Kelly)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, fontSize: 9 }}>
+                <div>
+                  <div style={{ fontSize: 7, color: "var(--text3)" }}>INITIAL</div>
+                  <div style={{ fontWeight: 700 }}>{s.pyramid_plan.initial?.shares} sh @ ${s.pyramid_plan.initial?.price}</div>
+                </div>
+                {s.pyramid_plan.add1?.price && (
+                  <div>
+                    <div style={{ fontSize: 7, color: "var(--text3)" }}>ADD @ T1</div>
+                    <div style={{ fontWeight: 700 }}>{s.pyramid_plan.add1.shares} sh @ ${s.pyramid_plan.add1.price}</div>
+                  </div>
+                )}
+                {s.pyramid_plan.add2?.price && (
+                  <div>
+                    <div style={{ fontSize: 7, color: "var(--text3)" }}>ADD @ T2</div>
+                    <div style={{ fontWeight: 700 }}>{s.pyramid_plan.add2.shares} sh @ ${s.pyramid_plan.add2.price}</div>
+                  </div>
+                )}
+              </div>
+              <div style={{ fontSize: 8, color: "var(--text3)", marginTop: 4 }}>
+                Full: {s.pyramid_plan.full_position?.total_shares} shares · ${s.pyramid_plan.full_position?.total_dollar} · {s.pyramid_plan.full_position?.pct_equity}% equity
+              </div>
+            </div>
+          )}
+
           {/* Short MAGNA details */}
           {isShort && s.short_magna_details && (
             <div style={{ marginTop: 8 }}>
@@ -2885,6 +2933,34 @@ function StockbeeEPDashboard({ onQuickAdd }) {
           }}>Refresh</button>
         </div>
       </div>
+
+      {/* Hot sectors banner */}
+      {(summary.hot_sectors || []).length > 0 && (
+        <div style={{
+          marginBottom: 10, padding: "6px 12px", borderRadius: 3, fontSize: 10,
+          background: "rgba(255,109,0,0.06)", border: "1px solid rgba(255,109,0,0.2)", color: "#ff6d00",
+          display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center",
+        }}>
+          <span style={{ fontWeight: 700 }}>🔥 HOT:</span>
+          {(summary.hot_sectors || []).map(s => <span key={s} style={{ fontWeight: 600 }}>{s}</span>)}
+        </div>
+      )}
+
+      {/* VCP formations banner */}
+      {(data.vcp_formations || []).length > 0 && (
+        <div style={{
+          marginBottom: 10, padding: "6px 12px", borderRadius: 3, fontSize: 10,
+          background: "rgba(41,98,255,0.06)", border: "1px solid rgba(41,98,255,0.2)", color: "#2962ff",
+          display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center",
+        }}>
+          <span style={{ fontWeight: 700 }}>📐 VCP forming:</span>
+          {(data.vcp_formations || []).map(v => (
+            <span key={v.ticker} style={{ fontWeight: 600 }}>
+              {v.ticker} ({v.contractions} contractions, pivot ${v.pivot_price})
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* View tabs — simple */}
       <div style={{ display: "flex", gap: 2, marginBottom: 12 }}>

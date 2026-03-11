@@ -272,6 +272,27 @@ def send_ep_alert(ep_result: dict):
             short_lines.append(_format_ep_short(s))
         _send("\n".join(short_lines))
 
+    # ── Sector themes ──
+    theme = ep_result.get("theme_summary", {})
+    hot_sectors = theme.get("hot_sectors", {})
+    if hot_sectors:
+        theme_lines = ["<b>🔥 HOT SECTORS</b>"]
+        for sector, count in sorted(hot_sectors.items(), key=lambda x: -x[1]):
+            theme_lines.append(f"  {sector}: {count} EPs")
+        _send("\n".join(theme_lines))
+
+    # ── VCP formations on watchlist ──
+    vcp_list = ep_result.get("vcp_formations", [])
+    if vcp_list:
+        vcp_lines = [f"<b>📐 VCP FORMING — {len(vcp_list)} watchlist stocks</b>"]
+        for v in vcp_list[:5]:
+            vcp_lines.append(
+                f"  {v['ticker']} — {v['contractions']} contractions, "
+                f"tightness {v['tightness_score']}/10"
+                f"{' | Pivot $' + str(v['pivot_price']) if v.get('pivot_price') else ''}"
+            )
+        _send("\n".join(vcp_lines))
+
     # If nothing actionable at all
     if not actionable_eps and not short_eps:
         _send("No actionable EP setups today. Watchlist only.")
@@ -316,6 +337,25 @@ def _format_ep_long(s: dict) -> str:
             line += f" | T1: ${r1:.2f}"
     if quality:
         line += f" | {quality}"
+
+    # Sector theme
+    theme_score = s.get("sector_theme_score", 0)
+    if theme_score >= 2:
+        line += f"\n  🔥 {s.get('sector', '')} theme ({theme_score} peers)"
+
+    # Earnings countdown
+    days_earn = s.get("days_until_earnings")
+    if days_earn is not None:
+        if 0 < days_earn <= 7:
+            line += f" | ⚠️ Earnings in {days_earn}d"
+        elif 7 < days_earn <= 42:
+            line += f" | 📅 Earnings {days_earn}d"
+
+    # Pyramid hint
+    plan = s.get("pyramid_plan", {})
+    if plan.get("has_plan"):
+        init = plan.get("initial", {})
+        line += f"\n  📈 Pyramid: {init.get('shares', 0)} shares → add at T1/T2"
 
     return line
 

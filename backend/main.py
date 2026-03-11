@@ -227,6 +227,31 @@ scheduler.add_job(
 )
 
 
+# ── EP Real-time Entry Zone Monitor — every 5 mins during market hours ────
+def run_ep_zone_monitor():
+    try:
+        from intraday import is_market_hours
+        if not is_market_hours():
+            return
+        cache = read_cache()
+        if not cache or "stockbee_ep" not in cache:
+            return
+        from ep_realtime import check_entry_zones
+        alerts = check_entry_zones(cache)
+        if alerts:
+            print(f"[ep-zones] {len(alerts)} entry zone alerts fired: {[a['ticker'] for a in alerts]}")
+    except Exception as e:
+        print(f"[ep-zones] Error: {e}")
+
+scheduler.add_job(
+    run_ep_zone_monitor,
+    CronTrigger(day_of_week="mon-fri", hour="14-21", minute="*/5", timezone="UTC"),
+    id="ep_zone_monitor",
+    name="EP entry zone monitor (every 5min market hours)",
+    replace_existing=True,
+)
+
+
 def run_weekly_report_job():
     try:
         from weekly_report import send_weekly_report

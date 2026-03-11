@@ -1761,8 +1761,10 @@ def fetch_fundamentals_batch(tickers: list, delay: float = 0.15) -> dict:
             except Exception:
                 pass
 
-            # Company name and asset type for filtering
+            # Company name, sector, and asset type for filtering
             fund["company_name"] = info.get("shortName") or info.get("longName") or ""
+            fund["sector"] = info.get("sector") or ""
+            fund["industry"] = info.get("industry") or ""
             fund["quoteType"] = info.get("quoteType", "EQUITY")
 
             results[ticker] = fund
@@ -3425,6 +3427,18 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
     # Sector RS summary (leading/lagging vs SPY)
     sector_rs_summary = _compute_sector_rs_summary(bars_data)
 
+    # ── Tier 1 enrichment: sector themes, VCP, pyramiding, earnings ──
+    try:
+        from ep_realtime import enrich_ep_signals
+        tier1_extras = enrich_ep_signals(
+            all_eps, all_short_eps, bars_data, fund_data,
+            ep_watchlist, cfg
+        )
+    except Exception as e:
+        print(f"[ep-scan] Tier 1 enrichment error: {e}")
+        import traceback; traceback.print_exc()
+        tier1_extras = {"theme_summary": {}, "vcp_formations": []}
+
     return {
         # ── Combined display (respects bear regime ordering) ──
         "display_eps": display_order,
@@ -3453,6 +3467,10 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
         "ep_watchlist": ep_watchlist,
         "sector_rs_summary": sector_rs_summary,
         "ep_config": cfg,
+
+        # ── Tier 1 features ──
+        "theme_summary": tier1_extras.get("theme_summary", {}),
+        "vcp_formations": tier1_extras.get("vcp_formations", []),
 
         "summary": {
             # Long
@@ -3490,5 +3508,10 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
             "ti65_confirmed_count": sum(1 for e in all_eps if e.get("ti65_confirmed")),
             "lynch_high_count": sum(1 for e in all_eps if e.get("lynch_score", 0) >= 4),
             "tt_high_count": sum(1 for e in all_eps if e.get("tt_score", 0) >= 5),
+
+            # Tier 1
+            "theme_plays": tier1_extras.get("theme_summary", {}).get("theme_play_count", 0),
+            "hot_sectors": list(tier1_extras.get("theme_summary", {}).get("hot_sectors", {}).keys()),
+            "vcp_count": len(tier1_extras.get("vcp_formations", [])),
         },
     }
