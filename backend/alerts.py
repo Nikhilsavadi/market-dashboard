@@ -338,6 +338,16 @@ def _format_ep_long(s: dict) -> str:
     if quality:
         line += f" | {quality}"
 
+    # News catalyst
+    news_cat = s.get("news_catalyst", "")
+    news_hl = s.get("news_headline", "")
+    if news_cat and news_cat != "UNKNOWN" and news_hl:
+        cat_emoji = {"EARNINGS": "📊", "GUIDANCE": "📈", "FDA": "💊", "ANALYST": "📋",
+                     "CONTRACT": "🤝", "OFFERING": "📄"}.get(news_cat, "📰")
+        line += f"\n  {cat_emoji} {news_hl[:80]}"
+    elif news_hl:
+        line += f"\n  📰 {news_hl[:80]}"
+
     # Sector theme
     theme_score = s.get("sector_theme_score", 0)
     if theme_score >= 2:
@@ -388,8 +398,15 @@ def _format_ep_short(s: dict) -> str:
     name_str = f" {name}" if name else ""
     line = f"\n🔻 <b>{ticker}</b>{name_str} ${price:.2f} | {badge}"
     line += f"\n  Gap {gap_pct:+.0f}% · Vol {vol_ratio:.0f}x · Short MAGNA {magna}/6"
-    if catalyst:
+    if catalyst and catalyst != "Unknown catalyst":
         line += f"\n  {cat_emoji} {catalyst}"
+
+    # News headline (fills in when fundamental catalyst is Unknown)
+    news_hl = s.get("news_headline", "")
+    if news_hl and (not catalyst or catalyst == "Unknown catalyst"):
+        news_cat = s.get("news_catalyst", "")
+        n_emoji = {"EARNINGS": "📊", "GUIDANCE": "📈", "FDA": "💊", "ANALYST": "📋"}.get(news_cat, "📰")
+        line += f"\n  {n_emoji} {news_hl[:80]}"
 
     if zone_lo and zone_hi and stop:
         line += f"\n  Short: ${zone_lo}-${zone_hi} | Cover stop: ${stop:.2f}"

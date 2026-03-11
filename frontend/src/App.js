@@ -2653,6 +2653,21 @@ function EPCard({ s, onQuickAdd }) {
         )}
       </div>
 
+      {/* News catalyst */}
+      {s.news_headline && (
+        <div style={{
+          marginTop: 4, fontSize: 9, color: "var(--text3)",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {s.news_catalyst === "EARNINGS" ? "📊" : s.news_catalyst === "FDA" ? "💊" :
+           s.news_catalyst === "GUIDANCE" ? "📈" : s.news_catalyst === "ANALYST" ? "📋" :
+           s.news_catalyst === "CONTRACT" ? "🤝" : "📰"}{" "}
+          <span style={{ color: s.news_catalyst !== "UNKNOWN" ? "var(--text2)" : "var(--text3)" }}>
+            {s.news_headline}
+          </span>
+        </div>
+      )}
+
       {/* Row 3: Entry zone + stop + R1 */}
       {intel.entry_zone_low && (
         <div style={{ display: "flex", gap: 14, marginTop: 5, fontSize: 10, flexWrap: "wrap" }}>

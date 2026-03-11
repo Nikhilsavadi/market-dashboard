@@ -1767,6 +1767,18 @@ def fetch_fundamentals_batch(tickers: list, delay: float = 0.15) -> dict:
             fund["industry"] = info.get("industry") or ""
             fund["quoteType"] = info.get("quoteType", "EQUITY")
 
+            # Recent news headlines for catalyst classification
+            try:
+                news_items = tk.news if 'tk' in dir() else yf.Ticker(ticker).news
+                if news_items:
+                    fund["news"] = [
+                        {"title": n.get("title", ""), "publisher": n.get("publisher", ""),
+                         "date": n.get("providerPublishTime", "")}
+                        for n in news_items[:5]
+                    ]
+            except Exception:
+                pass
+
             results[ticker] = fund
 
             time.sleep(delay)
@@ -2491,6 +2503,89 @@ def check_do_not_buy(df: pd.DataFrame, config: dict = None) -> dict:
 
 
 # ── SHORT EP DETECTION ────────────────────────────────────────────────────────
+
+def classify_news_catalyst(fund: dict) -> dict:
+    """
+    Classify EP catalyst from recent yfinance news headlines.
+
+    Parses headline keywords to identify:
+    - EARNINGS: beat/miss, EPS, revenue, quarterly results
+    - GUIDANCE: raised/lowered guidance, outlook, forecast
+    - ANALYST: upgrade/downgrade, price target
+    - CONTRACT: deal, partnership, acquisition, FDA
+    - OFFERING: secondary, dilution, shelf registration
+    - UNKNOWN: no clear catalyst identified
+
+    Returns dict with catalyst_type, catalyst_headline, catalyst_tags.
+    """
+    result = {
+        "news_catalyst": "UNKNOWN",
+        "news_headline": "",
+        "news_tags": [],
+        "news_publisher": "",
+    }
+
+    news = fund.get("news", [])
+    if not news:
+        return result
+
+    # Keyword groups (checked in priority order)
+    CATALYST_KEYWORDS = {
+        "EARNINGS": [
+            "earnings", "EPS", "quarterly results", "revenue beat",
+            "profit", "net income", "beats estimates", "misses estimates",
+            "quarterly report", "fiscal Q", "beats consensus",
+        ],
+        "GUIDANCE": [
+            "guidance", "outlook", "forecast", "raises full-year",
+            "lowers guidance", "raises guidance", "revised outlook",
+            "full-year", "annual forecast",
+        ],
+        "FDA": [
+            "FDA", "approval", "breakthrough", "phase 3", "phase 2",
+            "clinical trial", "drug approval", "PDUFA", "NDA",
+        ],
+        "ANALYST": [
+            "upgrade", "downgrade", "price target", "initiates coverage",
+            "overweight", "underweight", "buy rating", "outperform",
+        ],
+        "CONTRACT": [
+            "contract", "deal", "partnership", "acquisition", "merger",
+            "awarded", "selected", "billion-dollar", "agreement",
+        ],
+        "OFFERING": [
+            "offering", "secondary", "dilution", "shelf registration",
+            "stock sale", "public offering", "ATM",
+        ],
+    }
+
+    for article in news[:5]:
+        title = article.get("title", "")
+        title_lower = title.lower()
+
+        for catalyst_type, keywords in CATALYST_KEYWORDS.items():
+            for kw in keywords:
+                if kw.lower() in title_lower:
+                    result["news_catalyst"] = catalyst_type
+                    result["news_headline"] = title[:120]
+                    result["news_publisher"] = article.get("publisher", "")
+                    result["news_tags"].append(catalyst_type)
+
+                    # Return on first strong match
+                    if catalyst_type in ("EARNINGS", "FDA", "GUIDANCE"):
+                        return result
+
+    # If we found tags but no strong match, use the first one
+    if result["news_tags"] and result["news_catalyst"] == "UNKNOWN":
+        result["news_catalyst"] = result["news_tags"][0]
+
+    # If still unknown but we have headlines, use top headline
+    if result["news_catalyst"] == "UNKNOWN" and news:
+        result["news_headline"] = news[0].get("title", "")[:120]
+        result["news_publisher"] = news[0].get("publisher", "")
+
+    return result
+
 
 def _classify_short_catalyst(fund: dict) -> dict:
     """
@@ -3301,6 +3396,9 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
             # Entry price intelligence
             entry_intel = calculate_entry_intelligence(df, ep_result, cfg)
 
+            # News-based catalyst classification
+            news_cat = classify_news_catalyst(fund)
+
             # Build full signal
             signal = {
                 "ticker": ticker,
@@ -3313,6 +3411,7 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
                 **short_int,
                 "entry_tactic": entry_tactic,
                 "entry_intel": entry_intel,
+                **news_cat,
                 **lynch,
                 **bag_holder,
                 **ti65,
@@ -3359,12 +3458,16 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
             # Short entry intelligence
             short_entry_intel = calculate_short_entry_intelligence(df, short_result, cfg)
 
+            # News catalyst (enhances fundamental-based short catalyst)
+            short_news = classify_news_catalyst(fund)
+
             short_signal = {
                 "ticker": ticker,
                 "name": fund.get("company_name", ""),
                 "price": round(price, 2),
                 **short_result,
                 **short_magna,
+                **short_news,
                 "entry_intel": short_entry_intel,
                 "short_pct_float": fund.get("short_pct_float"),
             }
