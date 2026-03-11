@@ -117,8 +117,8 @@ def _simulate_trade(df: pd.DataFrame, entry_idx: int, entry_price: float,
                      stop_price: float, target_pct: float = 20.0,
                      max_hold: int = 20) -> dict:
     """
-    Simulate a trade from entry_idx forward.
-    Returns trade result dict.
+    Simulate a trade from entry_idx forward using FIXED stop/target.
+    Legacy method — kept for comparison.
     """
     n = len(df)
     closes = df["close"]
@@ -185,6 +185,97 @@ def _simulate_trade(df: pd.DataFrame, entry_idx: int, entry_price: float,
     }
 
 
+def _simulate_trade_trailing(df: pd.DataFrame, entry_idx: int, entry_price: float,
+                              stop_price: float, be_trigger_pct: float = 10.0,
+                              trail_pct: float = 15.0, max_hold: int = 60) -> dict:
+    """
+    Simulate a trade using the CURRENT live exit strategy:
+    1. Initial stop below EP day low
+    2. Move to breakeven after +be_trigger_pct% gain
+    3. Trail trail_pct% from highest close
+    4. No fixed target — hold until trailing stop triggers or max_hold days
+
+    This matches EP_CONFIG exit_be_trigger_pct and exit_trail_pct.
+    """
+    n = len(df)
+    closes = df["close"]
+    highs = df["high"]
+    lows = df["low"]
+
+    best_price = entry_price
+    worst_price = entry_price
+    exit_price = entry_price
+    exit_reason = "timeout"
+    hold_days = 0
+    breakeven_hit = False
+    trailing_active = False
+    current_stop = stop_price
+    highest_close = entry_price
+
+    # Multi-period returns (buy-and-hold reference)
+    returns = {}
+    for d in [1, 3, 5, 10, 20]:
+        future_idx = entry_idx + d
+        if future_idx < n:
+            future_price = float(closes.iloc[future_idx])
+            returns[f"return_{d}d"] = round((future_price - entry_price) / entry_price * 100, 2)
+        else:
+            returns[f"return_{d}d"] = None
+
+    for i in range(entry_idx + 1, min(entry_idx + max_hold + 1, n)):
+        day_low = float(lows.iloc[i])
+        day_high = float(highs.iloc[i])
+        day_close = float(closes.iloc[i])
+        hold_days = i - entry_idx
+
+        best_price = max(best_price, day_high)
+        worst_price = min(worst_price, day_low)
+
+        # Stop hit (initial or trailing)
+        if day_low <= current_stop:
+            exit_price = current_stop
+            exit_reason = "trailing_stop" if trailing_active else ("breakeven" if breakeven_hit else "stop")
+            break
+
+        # Update highest close
+        if day_close > highest_close:
+            highest_close = day_close
+
+        # Breakeven trigger
+        gain_pct = (day_close - entry_price) / entry_price * 100
+        if not breakeven_hit and gain_pct >= be_trigger_pct:
+            breakeven_hit = True
+            current_stop = max(current_stop, entry_price)
+
+        # Trailing stop: activate after breakeven, trail from highest close
+        if breakeven_hit:
+            trailing_active = True
+            trail_stop = highest_close * (1 - trail_pct / 100)
+            current_stop = max(current_stop, trail_stop)
+
+        exit_price = day_close
+
+    pnl_pct = round((exit_price - entry_price) / entry_price * 100, 2)
+    mfe_pct = round((best_price - entry_price) / entry_price * 100, 2)
+    mae_pct = round((worst_price - entry_price) / entry_price * 100, 2)
+
+    return {
+        "entry_price": round(entry_price, 2),
+        "exit_price": round(exit_price, 2),
+        "stop_price": round(stop_price, 2),
+        "final_stop": round(current_stop, 2),
+        "pnl_pct": pnl_pct,
+        "hold_days": hold_days,
+        "exit_reason": exit_reason,
+        "mfe_pct": mfe_pct,
+        "mae_pct": mae_pct,
+        "win": pnl_pct > 0,
+        "breakeven_hit": breakeven_hit,
+        "highest_close": round(highest_close, 2),
+        **returns,
+    }
+
+
 def backtest_eps(bars_data: dict, lookback_days: int = 365,
                  config: dict = None) -> dict:
     """
@@ -204,8 +295,20 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
     all_trades = []
     ep_events = []
 
+    # Exit strategy params from config
+    be_trigger = cfg.get("exit_be_trigger_pct", 10)
+    trail_pct = cfg.get("exit_trail_pct", 15)
+
+    # ETF filter
+    _FUND_QUOTE_TYPES = {"ETF", "MUTUALFUND", "MONEYMARKET", "INDEX"}
+
     for ticker, df in bars_data.items():
         if df is None or len(df) < 60:
+            continue
+
+        # Apply current live filters
+        last_close = float(df["close"].iloc[-1])
+        if last_close < 2.0:
             continue
 
         n = len(df)
@@ -216,6 +319,11 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
             if ep is None:
                 continue
 
+            # 9M EP filter: require gap >= 3% or intraday range >= 5%
+            intraday_range = (ep["day_high"] - ep["day_low"]) / ep["day_low"] * 100 if ep["day_low"] > 0 else 0
+            if ep.get("is_9m") and abs(ep["gap_pct"]) < 3 and intraday_range < 5:
+                continue
+
             ep["ticker"] = ticker
 
             # Determine EP type
@@ -223,7 +331,7 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
             if ep["is_9m"] and ep["gap_pct"] < 5:
                 ep_type = "9M"
             elif ep["gap_pct"] >= 10 and not ep.get("neglected", True):
-                ep_type = "STORY"  # Gap without neglect = likely story
+                ep_type = "STORY"
 
             ep["ep_type"] = ep_type
             ep_events.append(ep)
@@ -240,11 +348,30 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
             # Stop: below EP day low
             stop_price = ep["day_low"] * 0.99
 
-            # Target: 2x gap magnitude from entry
-            target_pct = ep["gap_pct"]  # e.g., if gap was 15%, target is +15% from entry
+            # Classify Kelly tier (simplified — uses gap/vol/price)
+            gap = ep["gap_pct"]
+            vol_r = ep["vol_ratio"]
+            avg_dollar_vol = float(df["close"].iloc[max(0,idx-50):idx].mean()) * float(df["volume"].iloc[max(0,idx-50):idx].mean()) if idx > 50 else 1e9
+            is_micro = avg_dollar_vol < cfg.get("tier_max_dollar_vol", 5_000_000)
 
-            trade = _simulate_trade(df, entry_idx, entry_price, stop_price,
-                                    target_pct=max(10, target_pct), max_hold=20)
+            if (is_micro and gap >= cfg.get("tier1_gap_micro", 30)) or gap >= cfg.get("tier1_gap_ti65", 20):
+                tier = 1
+                tier_label = "MAX"
+            elif gap >= cfg.get("tier2_gap_any", 50) or (is_micro and ep.get("neglected") and gap >= cfg.get("tier2_gap_micro_neglected", 20)):
+                tier = 2
+                tier_label = "STRONG"
+            elif (vol_r >= 5 and gap >= cfg.get("tier3_gap_vol5x", 20)) or vol_r >= cfg.get("tier3_vol_any", 10):
+                tier = 3
+                tier_label = "NORMAL"
+            else:
+                tier = 0
+                tier_label = "WATCHLIST"
+
+            # Simulate with trailing stop (current live strategy)
+            trade = _simulate_trade_trailing(
+                df, entry_idx, entry_price, stop_price,
+                be_trigger_pct=be_trigger, trail_pct=trail_pct, max_hold=60,
+            )
             trade["ticker"] = ticker
             trade["ep_date"] = ep["date"]
             trade["ep_type"] = ep_type
@@ -254,6 +381,9 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
             trade["above_50ma"] = ep.get("above_50ma")
             trade["near_52w_high"] = ep.get("near_52w_high")
             trade["is_9m"] = ep.get("is_9m")
+            trade["tier"] = tier
+            trade["tier_label"] = tier_label
+            trade["is_micro"] = is_micro
 
             all_trades.append(trade)
 
@@ -295,9 +425,12 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
             ),
             "exit_breakdown": {
                 "stop": int((tdf["exit_reason"] == "stop").sum()),
+                "breakeven": int((tdf["exit_reason"] == "breakeven").sum()),
+                "trailing_stop": int((tdf["exit_reason"] == "trailing_stop").sum()),
                 "target": int((tdf["exit_reason"] == "target").sum()),
                 "timeout": int((tdf["exit_reason"] == "timeout").sum()),
             },
+            "breakeven_rate": round(tdf["breakeven_hit"].sum() / len(tdf) * 100, 1) if "breakeven_hit" in tdf else None,
             # Multi-period returns
             "avg_return_1d": round(float(tdf["return_1d"].dropna().mean()), 2) if "return_1d" in tdf else None,
             "avg_return_3d": round(float(tdf["return_3d"].dropna().mean()), 2) if "return_3d" in tdf else None,
@@ -313,6 +446,33 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
     for ep_type in trades_df["ep_type"].unique():
         subset = trades_df[trades_df["ep_type"] == ep_type]
         by_type[ep_type] = _calc_stats(subset)
+
+    # By Kelly tier (THE KEY OUTPUT — validates the current live tiers)
+    by_tier = {}
+    tier_names = {1: "MAX", 2: "STRONG", 3: "NORMAL", 0: "WATCHLIST"}
+    for tier_num, tier_name in tier_names.items():
+        subset = trades_df[trades_df["tier"] == tier_num]
+        if len(subset) > 0:
+            by_tier[tier_name] = _calc_stats(subset)
+
+    # Actionable only (tiers 1-3, what we'd actually trade)
+    actionable_df = trades_df[trades_df["tier"] >= 1]
+    actionable_stats = _calc_stats(actionable_df) if len(actionable_df) > 0 else {}
+
+    # Equity curve for actionable trades (simple: cumulative returns)
+    equity_curve = []
+    if len(actionable_df) > 0:
+        sorted_trades = actionable_df.sort_values("ep_date")
+        cum_return = 0
+        for _, t in sorted_trades.iterrows():
+            cum_return += t["pnl_pct"]
+            equity_curve.append({
+                "date": t["ep_date"],
+                "ticker": t["ticker"],
+                "pnl_pct": t["pnl_pct"],
+                "cum_return": round(cum_return, 2),
+                "tier": t["tier_label"],
+            })
 
     # By gap size bucket
     trades_df["gap_bucket"] = pd.cut(trades_df["gap_pct"],
@@ -398,16 +558,42 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
         if above_wr > below_wr + 5:
             insights.append(f"EPs above 50MA outperform: {above_wr}% vs {below_wr}% win rate")
 
+    # Kelly tier insights
+    for tier_name in ["MAX", "STRONG", "NORMAL", "WATCHLIST"]:
+        if tier_name in by_tier:
+            t = by_tier[tier_name]
+            insights.append(
+                f"{tier_name}: {t['total_trades']} trades, "
+                f"{t['win_rate']}% WR, "
+                f"{t['avg_return']:+.1f}% avg, "
+                f"PF {t['profit_factor']}"
+            )
+
+    # Actionable vs watchlist comparison
+    if actionable_stats and "WATCHLIST" in by_tier:
+        act_exp = actionable_stats.get("expectancy", 0)
+        watch_exp = by_tier["WATCHLIST"].get("expectancy", 0)
+        if act_exp > watch_exp:
+            insights.append(
+                f"Tier filter works: actionable expectancy {act_exp:+.2f}% vs watchlist {watch_exp:+.2f}%"
+            )
+
     return {
         "total_events": len(ep_events),
         "total_trades": len(all_trades),
+        "actionable_trades": len(actionable_df) if len(actionable_df) > 0 else 0,
         "lookback_days": lookback_days,
+        "exit_strategy": f"BE at +{be_trigger}%, trail {trail_pct}%, max 60 days",
+        "filters": "Price >= $2, no ETFs/funds, 9M needs 3% gap or 5% range",
         "overall": overall,
+        "actionable_only": actionable_stats,
+        "by_tier": by_tier,
         "by_type": by_type,
         "by_gap_size": by_gap,
         "by_volume_ratio": by_vol,
         "by_neglect": by_neglect,
         "by_technical_position": by_tech,
+        "equity_curve": equity_curve,
         "sample_trades": sample_trades,
         "insights": insights,
         "all_trades": [
