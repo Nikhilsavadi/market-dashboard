@@ -386,6 +386,138 @@ def _simulate_trade_weekly_ma(df: pd.DataFrame, entry_idx: int, entry_price: flo
     }
 
 
+def _simulate_trade_ratchet(df: pd.DataFrame, entry_idx: int, entry_price: float,
+                             stop_price: float, max_hold: int = 252) -> dict:
+    """
+    WINNER-DERIVED exit strategy based on reverse-engineering 100%+ EP movers.
+
+    Key findings from analyzing HOOD, NVDA, PLTR, APP, AXON, TGTX, RDDT etc:
+    - Big winners tolerate 32% avg drawdown from peak (up to 36% at 75th pct)
+    - Take 130 days median to reach peak
+    - Reach +50% in ~55 days, +100% in ~95 days
+    - The 15% tight trail captured ZERO 100%+ moves
+
+    Rules (ratcheting trail — tighten as gains increase):
+    Phase 0 (0-10% gain):  Initial stop (EP day low)
+    Phase 1 (10-20% gain): Move to breakeven, 25% trail from peak
+    Phase 2 (20-50% gain): 20% trail from peak
+    Phase 3 (50-100% gain): 15% trail from peak
+    Phase 4 (100%+ gain):  12% trail from peak (protect the double)
+
+    Additionally: 10-week MA trail activates at +30% as a secondary exit
+    (whichever is HIT first — the ratchet % or MA — triggers exit).
+    """
+    n = len(df)
+    closes = df["close"]
+    highs = df["high"]
+    lows = df["low"]
+
+    best_price = entry_price
+    worst_price = entry_price
+    exit_price = entry_price
+    exit_reason = "timeout"
+    hold_days = 0
+    breakeven_hit = False
+    current_stop = stop_price
+    highest_close = entry_price
+    phase = 0
+
+    # Multi-period returns
+    returns = {}
+    for d in [1, 3, 5, 10, 20, 60, 120]:
+        future_idx = entry_idx + d
+        if future_idx < n:
+            future_price = float(closes.iloc[future_idx])
+            returns[f"return_{d}d"] = round((future_price - entry_price) / entry_price * 100, 2)
+        else:
+            returns[f"return_{d}d"] = None
+
+    ma_len = 50  # 10-week MA in trading days
+
+    for i in range(entry_idx + 1, min(entry_idx + max_hold + 1, n)):
+        day_low = float(lows.iloc[i])
+        day_high = float(highs.iloc[i])
+        day_close = float(closes.iloc[i])
+        hold_days = i - entry_idx
+
+        best_price = max(best_price, day_high)
+        worst_price = min(worst_price, day_low)
+
+        # Stop hit
+        if day_low <= current_stop:
+            exit_price = max(current_stop, day_low)  # slippage: get stop or day_low
+            exit_price = current_stop
+            if phase == 0:
+                exit_reason = "stop"
+            elif breakeven_hit and phase <= 1:
+                exit_reason = "breakeven"
+            else:
+                exit_reason = f"ratchet_p{phase}"
+            break
+
+        if day_close > highest_close:
+            highest_close = day_close
+
+        gain_pct = (day_close - entry_price) / entry_price * 100
+        peak_gain = (highest_close - entry_price) / entry_price * 100
+
+        # Determine current phase and trail %
+        if peak_gain >= 100:
+            phase = 4
+            trail_pct = 12
+        elif peak_gain >= 50:
+            phase = 3
+            trail_pct = 15
+        elif peak_gain >= 20:
+            phase = 2
+            trail_pct = 20
+        elif peak_gain >= 10:
+            phase = 1
+            trail_pct = 25
+            if not breakeven_hit:
+                breakeven_hit = True
+                current_stop = max(current_stop, entry_price)
+        else:
+            trail_pct = None
+
+        # Update trailing stop based on ratchet
+        if trail_pct is not None:
+            ratchet_stop = highest_close * (1 - trail_pct / 100)
+            current_stop = max(current_stop, ratchet_stop)
+
+        # Secondary: 10-week MA trail (activates at +30%, checks weekly)
+        if peak_gain >= 30 and hold_days >= ma_len and hold_days % 5 == 0:
+            ma_start = max(0, i - ma_len)
+            ma_val = float(closes.iloc[ma_start:i].mean())
+            if day_close < ma_val:
+                exit_price = day_close
+                exit_reason = "ma_trail"
+                break
+
+        exit_price = day_close
+
+    pnl_pct = round((exit_price - entry_price) / entry_price * 100, 2)
+    mfe_pct = round((best_price - entry_price) / entry_price * 100, 2)
+    mae_pct = round((worst_price - entry_price) / entry_price * 100, 2)
+
+    return {
+        "entry_price": round(entry_price, 2),
+        "exit_price": round(exit_price, 2),
+        "stop_price": round(stop_price, 2),
+        "final_stop": round(current_stop, 2),
+        "pnl_pct": pnl_pct,
+        "hold_days": hold_days,
+        "exit_reason": exit_reason,
+        "mfe_pct": mfe_pct,
+        "mae_pct": mae_pct,
+        "win": pnl_pct > 0,
+        "breakeven_hit": breakeven_hit,
+        "highest_close": round(highest_close, 2),
+        "final_phase": phase,
+        **returns,
+    }
+
+
 def backtest_eps(bars_data: dict, lookback_days: int = 365,
                  config: dict = None) -> dict:
     """
@@ -404,6 +536,7 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
 
     all_trades = []        # Swing (15% trail)
     all_trades_wide = []   # Position (weekly MA trail)
+    all_trades_ratchet = []  # Winner-derived ratchet strategy
     ep_events = []
 
     # Exit strategy params from config
@@ -511,6 +644,19 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
             trade_wide["tier"] = tier
             trade_wide["tier_label"] = tier_label
             all_trades_wide.append(trade_wide)
+
+            # Also simulate with RATCHET strategy (winner-derived)
+            trade_ratchet = _simulate_trade_ratchet(
+                df, entry_idx, entry_price, stop_price, max_hold=252,
+            )
+            trade_ratchet["ticker"] = ticker
+            trade_ratchet["ep_date"] = ep["date"]
+            trade_ratchet["ep_type"] = ep_type
+            trade_ratchet["gap_pct"] = ep["gap_pct"]
+            trade_ratchet["vol_ratio"] = ep["vol_ratio"]
+            trade_ratchet["tier"] = tier
+            trade_ratchet["tier_label"] = tier_label
+            all_trades_ratchet.append(trade_ratchet)
 
     # ── Aggregate statistics ─────────────────────────────────────────────────
     if not all_trades:
@@ -751,6 +897,51 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
                     "gap_pct": row["gap_pct"], "mfe_pct": row["mfe_pct"],
                 })
 
+    # ── RATCHET STRATEGY comparison (winner-derived) ─────────────────────
+    ratchet_stats = {}
+    ratchet_by_tier = {}
+    ratchet_actionable = {}
+    ratchet_sample = []
+    if all_trades_ratchet:
+        ratchet_df = pd.DataFrame(all_trades_ratchet)
+        ratchet_stats = _calc_stats(ratchet_df)
+
+        for tier_num, tier_name in tier_names.items():
+            subset = ratchet_df[ratchet_df["tier"] == tier_num]
+            if len(subset) > 0:
+                ratchet_by_tier[tier_name] = _calc_stats(subset)
+
+        ratchet_act = ratchet_df[ratchet_df["tier"] >= 1]
+        ratchet_actionable = _calc_stats(ratchet_act) if len(ratchet_act) > 0 else {}
+
+        # Big winners
+        big_ratchet = ratchet_df[ratchet_df["pnl_pct"] >= 100]
+        if len(big_ratchet) > 0:
+            insights.append(
+                f"RATCHET STRATEGY: {len(big_ratchet)} trades with 100%+ returns "
+                f"(avg {big_ratchet['pnl_pct'].mean():.0f}%, best {big_ratchet['pnl_pct'].max():.0f}%)"
+            )
+
+        if ratchet_actionable:
+            insights.append(
+                f"RATCHET (winner-derived): {ratchet_actionable.get('avg_return', 0):+.1f}% avg, "
+                f"{ratchet_actionable.get('win_rate', 0):.0f}% WR, "
+                f"hold {ratchet_actionable.get('avg_hold_days', 0):.0f}d, "
+                f"PF {ratchet_actionable.get('profit_factor', 0)}"
+            )
+
+        # Top ratchet winners
+        if len(ratchet_df) > 0:
+            top_ratchet = ratchet_df.nlargest(10, "pnl_pct")
+            for _, row in top_ratchet.iterrows():
+                ratchet_sample.append({
+                    "ticker": row["ticker"], "ep_date": row["ep_date"],
+                    "pnl_pct": row["pnl_pct"], "hold_days": int(row["hold_days"]),
+                    "exit_reason": row["exit_reason"], "tier": row["tier_label"],
+                    "gap_pct": row["gap_pct"], "mfe_pct": row["mfe_pct"],
+                    "final_phase": row.get("final_phase", 0),
+                })
+
     return {
         "total_events": len(ep_events),
         "total_trades": len(all_trades),
@@ -777,6 +968,15 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
             "actionable_only": wide_actionable,
             "by_tier": wide_by_tier,
             "top_winners": wide_sample,
+        },
+
+        # ── RATCHET STRATEGY (winner-derived) ──
+        "ratchet_strategy": {
+            "description": "Ratcheting trail: 25%→20%→15%→12% as gains grow, +10w MA secondary, max 252d",
+            "overall": ratchet_stats,
+            "actionable_only": ratchet_actionable,
+            "by_tier": ratchet_by_tier,
+            "top_winners": ratchet_sample,
         },
 
         "all_trades": [
