@@ -276,6 +276,116 @@ def _simulate_trade_trailing(df: pd.DataFrame, entry_idx: int, entry_price: floa
     }
 
 
+def _simulate_trade_weekly_ma(df: pd.DataFrame, entry_idx: int, entry_price: float,
+                               stop_price: float, ma_period: int = 10,
+                               max_hold: int = 252) -> dict:
+    """
+    Simulate a trade using WEEKLY MA trailing stop (position trade style).
+
+    Rules:
+    1. Initial stop below EP day low
+    2. After +15% gain, switch to 10-week (50-day) MA trail
+    3. Exit when weekly close below the MA
+    4. Max hold 252 days (1 year)
+
+    This is how Minervini/O'Neil hold big winners for months.
+    """
+    n = len(df)
+    closes = df["close"]
+    highs = df["high"]
+    lows = df["low"]
+
+    best_price = entry_price
+    worst_price = entry_price
+    exit_price = entry_price
+    exit_reason = "timeout"
+    hold_days = 0
+    breakeven_hit = False
+    ma_trail_active = False
+    current_stop = stop_price
+    highest_close = entry_price
+
+    # Multi-period returns
+    returns = {}
+    for d in [1, 3, 5, 10, 20, 60, 120]:
+        future_idx = entry_idx + d
+        if future_idx < n:
+            future_price = float(closes.iloc[future_idx])
+            returns[f"return_{d}d"] = round((future_price - entry_price) / entry_price * 100, 2)
+        else:
+            returns[f"return_{d}d"] = None
+
+    ma_len = ma_period * 5  # 10 weeks = 50 trading days
+
+    for i in range(entry_idx + 1, min(entry_idx + max_hold + 1, n)):
+        day_low = float(lows.iloc[i])
+        day_high = float(highs.iloc[i])
+        day_close = float(closes.iloc[i])
+        hold_days = i - entry_idx
+
+        best_price = max(best_price, day_high)
+        worst_price = min(worst_price, day_low)
+
+        # Initial stop hit
+        if day_low <= current_stop and not ma_trail_active:
+            exit_price = current_stop
+            exit_reason = "stop"
+            break
+
+        if day_close > highest_close:
+            highest_close = day_close
+
+        gain_pct = (day_close - entry_price) / entry_price * 100
+
+        # Move to breakeven at +10%
+        if not breakeven_hit and gain_pct >= 10:
+            breakeven_hit = True
+            current_stop = max(current_stop, entry_price)
+
+        # Activate MA trail at +15%
+        if not ma_trail_active and gain_pct >= 15:
+            ma_trail_active = True
+
+        # MA trail: check weekly close (every 5 bars) against MA
+        if ma_trail_active and hold_days >= ma_len and hold_days % 5 == 0:
+            ma_start = max(0, i - ma_len)
+            ma_val = float(closes.iloc[ma_start:i].mean())
+            if day_close < ma_val:
+                exit_price = day_close
+                exit_reason = "ma_trail"
+                break
+            # Also update hard stop to be 25% below highest
+            current_stop = max(current_stop, highest_close * 0.75)
+
+        # Hard stop (25% from peak) as catastrophe protection
+        if ma_trail_active and day_low <= highest_close * 0.75:
+            exit_price = highest_close * 0.75
+            exit_reason = "hard_trail"
+            break
+
+        exit_price = day_close
+
+    pnl_pct = round((exit_price - entry_price) / entry_price * 100, 2)
+    mfe_pct = round((best_price - entry_price) / entry_price * 100, 2)
+    mae_pct = round((worst_price - entry_price) / entry_price * 100, 2)
+
+    return {
+        "entry_price": round(entry_price, 2),
+        "exit_price": round(exit_price, 2),
+        "stop_price": round(stop_price, 2),
+        "final_stop": round(current_stop, 2),
+        "pnl_pct": pnl_pct,
+        "hold_days": hold_days,
+        "exit_reason": exit_reason,
+        "mfe_pct": mfe_pct,
+        "mae_pct": mae_pct,
+        "win": pnl_pct > 0,
+        "breakeven_hit": breakeven_hit,
+        "highest_close": round(highest_close, 2),
+        **returns,
+    }
+
+
 def backtest_eps(bars_data: dict, lookback_days: int = 365,
                  config: dict = None) -> dict:
     """
@@ -292,7 +402,8 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
     """
     cfg = {**EP_CONFIG, **(config or {})}
 
-    all_trades = []
+    all_trades = []        # Swing (15% trail)
+    all_trades_wide = []   # Position (weekly MA trail)
     ep_events = []
 
     # Exit strategy params from config
@@ -386,6 +497,20 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
             trade["is_micro"] = is_micro
 
             all_trades.append(trade)
+
+            # Also simulate with WIDE position-trade strategy (weekly MA trail)
+            trade_wide = _simulate_trade_weekly_ma(
+                df, entry_idx, entry_price, stop_price,
+                ma_period=10, max_hold=252,
+            )
+            trade_wide["ticker"] = ticker
+            trade_wide["ep_date"] = ep["date"]
+            trade_wide["ep_type"] = ep_type
+            trade_wide["gap_pct"] = ep["gap_pct"]
+            trade_wide["vol_ratio"] = ep["vol_ratio"]
+            trade_wide["tier"] = tier
+            trade_wide["tier_label"] = tier_label
+            all_trades_wide.append(trade_wide)
 
     # ── Aggregate statistics ─────────────────────────────────────────────────
     if not all_trades:
@@ -578,6 +703,54 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
                 f"Tier filter works: actionable expectancy {act_exp:+.2f}% vs watchlist {watch_exp:+.2f}%"
             )
 
+    # ── WIDE STRATEGY comparison (weekly MA trail, position trade) ──────────
+    wide_stats = {}
+    wide_by_tier = {}
+    wide_actionable = {}
+    wide_sample = []
+    if all_trades_wide:
+        wide_df = pd.DataFrame(all_trades_wide)
+        wide_stats = _calc_stats(wide_df)
+
+        for tier_num, tier_name in tier_names.items():
+            subset = wide_df[wide_df["tier"] == tier_num]
+            if len(subset) > 0:
+                wide_by_tier[tier_name] = _calc_stats(subset)
+
+        wide_act = wide_df[wide_df["tier"] >= 1]
+        wide_actionable = _calc_stats(wide_act) if len(wide_act) > 0 else {}
+
+        # Big winners (>100% gains)
+        big_winners = wide_df[wide_df["pnl_pct"] >= 100]
+        if len(big_winners) > 0:
+            insights.append(
+                f"WIDE STRATEGY: {len(big_winners)} trades with 100%+ returns "
+                f"(avg {big_winners['pnl_pct'].mean():.0f}%, best {big_winners['pnl_pct'].max():.0f}%)"
+            )
+
+        # Wide vs narrow comparison
+        if wide_actionable and actionable_stats:
+            insights.append(
+                f"SWING (15% trail): {actionable_stats.get('avg_return', 0):+.1f}% avg, "
+                f"{actionable_stats.get('win_rate', 0):.0f}% WR"
+            )
+            insights.append(
+                f"POSITION (10w MA): {wide_actionable.get('avg_return', 0):+.1f}% avg, "
+                f"{wide_actionable.get('win_rate', 0):.0f}% WR, "
+                f"hold {wide_actionable.get('avg_hold_days', 0):.0f}d"
+            )
+
+        # Top wide winners
+        if len(wide_df) > 0:
+            top_wide = wide_df.nlargest(10, "pnl_pct")
+            for _, row in top_wide.iterrows():
+                wide_sample.append({
+                    "ticker": row["ticker"], "ep_date": row["ep_date"],
+                    "pnl_pct": row["pnl_pct"], "hold_days": int(row["hold_days"]),
+                    "exit_reason": row["exit_reason"], "tier": row["tier_label"],
+                    "gap_pct": row["gap_pct"], "mfe_pct": row["mfe_pct"],
+                })
+
     return {
         "total_events": len(ep_events),
         "total_trades": len(all_trades),
@@ -596,6 +769,16 @@ def backtest_eps(bars_data: dict, lookback_days: int = 365,
         "equity_curve": equity_curve,
         "sample_trades": sample_trades,
         "insights": insights,
+
+        # ── WIDE STRATEGY (position trade) ──
+        "wide_strategy": {
+            "description": "10-week MA trail, BE at +10%, 25% hard stop, max 252 days",
+            "overall": wide_stats,
+            "actionable_only": wide_actionable,
+            "by_tier": wide_by_tier,
+            "top_winners": wide_sample,
+        },
+
         "all_trades": [
             {k: v for k, v in t.items()
              if k not in ("gap_bucket", "vol_bucket")}
