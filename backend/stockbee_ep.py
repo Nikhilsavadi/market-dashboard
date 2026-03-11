@@ -1755,6 +1755,9 @@ def fetch_fundamentals_batch(tickers: list, delay: float = 0.15) -> dict:
             except Exception:
                 pass
 
+            # Asset type for filtering out funds/ETFs
+            fund["quoteType"] = info.get("quoteType", "EQUITY")
+
             results[ticker] = fund
 
             time.sleep(delay)
@@ -3210,11 +3213,24 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
     short_delayed_eps = []
     short_story_eps = []
 
+    # Known ETF/fund suffixes and tickers to exclude
+    _FUND_QUOTE_TYPES = {"ETF", "MUTUALFUND", "MONEYMARKET", "INDEX"}
+
     for ticker, df in bars_data.items():
         if df is None or len(df) < 30:
             continue
 
+        # Skip penny stocks (< $2)
+        last_close = float(df["close"].iloc[-1])
+        if last_close < 2.0:
+            continue
+
+        # Skip ETFs, mutual funds, and index funds
         fund = fund_data.get(ticker, {})
+        quote_type = fund.get("quoteType", "EQUITY")
+        if quote_type in _FUND_QUOTE_TYPES:
+            continue
+
         past_eps = past_eps_by_ticker.get(ticker, [])
         past_short_eps = past_short_eps_by_ticker.get(ticker, [])
 
