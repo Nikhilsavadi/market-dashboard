@@ -1761,7 +1761,8 @@ def fetch_fundamentals_batch(tickers: list, delay: float = 0.15) -> dict:
             except Exception:
                 pass
 
-            # Asset type for filtering out funds/ETFs
+            # Company name and asset type for filtering
+            fund["company_name"] = info.get("shortName") or info.get("longName") or ""
             fund["quoteType"] = info.get("quoteType", "EQUITY")
 
             results[ticker] = fund
@@ -3301,6 +3302,7 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
             # Build full signal
             signal = {
                 "ticker": ticker,
+                "name": fund.get("company_name", ""),
                 "price": round(price, 2),
                 "ep_side": "LONG",
                 **ep_result,
@@ -3357,6 +3359,7 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
 
             short_signal = {
                 "ticker": ticker,
+                "name": fund.get("company_name", ""),
                 "price": round(price, 2),
                 **short_result,
                 **short_magna,

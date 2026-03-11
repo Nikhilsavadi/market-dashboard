@@ -300,7 +300,9 @@ def _format_ep_long(s: dict) -> str:
     # Tier emoji
     tier_emoji = {"MAX BET": "🥇", "STRONG": "🥈", "NORMAL": "🥉"}.get(tier_label, "")
 
-    line = f"\n{tier_emoji} <b>{ticker}</b> ${price:.2f} | {ep_type} | {tier_label} ({tier_sizing})"
+    name = s.get("name", "")
+    name_str = f" {name}" if name else ""
+    line = f"\n{tier_emoji} <b>{ticker}</b>{name_str} ${price:.2f} | {ep_type} | {tier_label} ({tier_sizing})"
     line += f"\n  Gap {gap_pct:+.0f}% · Vol {vol_ratio:.0f}x · MAGNA {magna}/7"
 
     if ti65 and ti65 != "N/A":
@@ -342,7 +344,9 @@ def _format_ep_short(s: dict) -> str:
         "ACCOUNTING": "🚩", "REGULATORY": "⚖️",
     }.get(catalyst_type, "❓")
 
-    line = f"\n🔻 <b>{ticker}</b> ${price:.2f} | {badge}"
+    name = s.get("name", "")
+    name_str = f" {name}" if name else ""
+    line = f"\n🔻 <b>{ticker}</b>{name_str} ${price:.2f} | {badge}"
     line += f"\n  Gap {gap_pct:+.0f}% · Vol {vol_ratio:.0f}x · Short MAGNA {magna}/6"
     if catalyst:
         line += f"\n  {cat_emoji} {catalyst}"

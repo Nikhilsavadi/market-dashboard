@@ -2584,6 +2584,7 @@ function EPCard({ s, onQuickAdd }) {
         <TVLink ticker={s.ticker}>
           <span style={{ fontWeight: 700, fontSize: 14, color: isShort ? "#d32f2f" : "var(--accent)" }}>{s.ticker}</span>
         </TVLink>
+        {s.name && <span style={{ fontSize: 10, color: "var(--text3)", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>}
         <span style={{ fontSize: 12, fontWeight: 600 }}>${s.price?.toFixed(2)}</span>
 
         {/* EP type badge */}
