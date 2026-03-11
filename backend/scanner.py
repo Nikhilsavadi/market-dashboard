@@ -661,11 +661,11 @@ def _run_scan_inner() -> dict:
     except Exception as e:
         print(f"[scanner] Journal check error: {e}")
 
-    # 19. Alerts (filtered by tier + score)
-    try:
-        send_scan_alert(payload, open_tickers=open_tickers)
-    except Exception as e:
-        print(f"[scanner] Alert error: {e}")
+    # 19. Alerts — disabled old Signal Desk format, EP alerts sent from EP scan
+    # try:
+    #     send_scan_alert(payload, open_tickers=open_tickers)
+    # except Exception as e:
+    #     print(f"[scanner] Alert error: {e}")
 
     return payload
 
