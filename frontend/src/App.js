@@ -2521,11 +2521,14 @@ const MAGNA_LABELS = {
 };
 
 const EP_TYPE_STYLES = {
-  CLASSIC:   { bg: "rgba(255,152,0,0.12)", color: "#ff9800", border: "rgba(255,152,0,0.4)", label: "CLASSIC EP" },
-  DELAYED:   { bg: "rgba(41,98,255,0.12)", color: "#2962ff", border: "rgba(41,98,255,0.4)", label: "DELAYED EP" },
-  "9M":      { bg: "rgba(156,39,176,0.12)", color: "#9c27b0", border: "rgba(156,39,176,0.4)", label: "9M EP" },
-  STORY:     { bg: "rgba(255,87,34,0.12)", color: "#ff5722", border: "rgba(255,87,34,0.4)", label: "STORY EP" },
-  MOM_BURST: { bg: "rgba(0,150,136,0.12)", color: "#009688", border: "rgba(0,150,136,0.4)", label: "MOM BURST" },
+  CLASSIC:       { bg: "rgba(255,152,0,0.12)", color: "#ff9800", border: "rgba(255,152,0,0.4)", label: "CLASSIC EP" },
+  DELAYED:       { bg: "rgba(41,98,255,0.12)", color: "#2962ff", border: "rgba(41,98,255,0.4)", label: "DELAYED EP" },
+  "9M":          { bg: "rgba(156,39,176,0.12)", color: "#9c27b0", border: "rgba(156,39,176,0.4)", label: "9M EP" },
+  STORY:         { bg: "rgba(255,87,34,0.12)", color: "#ff5722", border: "rgba(255,87,34,0.4)", label: "STORY EP" },
+  MOM_BURST:     { bg: "rgba(0,150,136,0.12)", color: "#009688", border: "rgba(0,150,136,0.4)", label: "MOM BURST" },
+  SHORT_CLASSIC: { bg: "rgba(211,47,47,0.12)", color: "#d32f2f", border: "rgba(211,47,47,0.4)", label: "SHORT EP" },
+  SHORT_DELAYED: { bg: "rgba(211,47,47,0.12)", color: "#d32f2f", border: "rgba(211,47,47,0.4)", label: "SHORT DELAYED" },
+  SHORT_STORY:   { bg: "rgba(211,47,47,0.12)", color: "#d32f2f", border: "rgba(211,47,47,0.4)", label: "SHORT STORY" },
 };
 
 const ENTRY_APPROACH_STYLES = {
@@ -2782,115 +2785,225 @@ function ExitStrategyCard({ exit, sizing }) {
   );
 }
 
-function StockbeeEPCard({ s, onQuickAdd }) {
+function EPCard({ s, onQuickAdd }) {
+  const isShort = (s.ep_side === "SHORT" || (s.ep_type || "").startsWith("SHORT"));
   const epStyle = EP_TYPE_STYLES[s.ep_type] || EP_TYPE_STYLES.CLASSIC;
-  const [showMagna, setShowMagna] = React.useState(false);
-  const [showExit, setShowExit] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(false);
+  const intel = s.entry_intel || {};
+  const rLevels = intel.r_levels || {};
+  const gapPct = s.ep_gap_pct || s.gap_pct || 0;
+  const volRatio = s.ep_vol_ratio || s.vol_ratio || 0;
+
+  // Tier colors
+  const tierColors = { "MAX BET": "#d4af37", "STRONG": "#ff6d00", "NORMAL": "#2d7a3a" };
+  const tierBg = { "MAX BET": "rgba(212,175,55,0.08)", "STRONG": "rgba(255,109,0,0.06)", "NORMAL": "rgba(45,122,58,0.04)" };
+  const borderColor = isShort ? "#d32f2f" : (tierColors[s.tier_label] || epStyle.color);
 
   return (
     <div style={{
-      background: "var(--bg2)", borderRadius: 4, padding: "12px 14px", marginBottom: 10,
-      border: `1px solid ${epStyle.border}`, borderLeft: `4px solid ${s.tier_color || epStyle.color}`,
-    }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+      background: isShort ? "rgba(211,47,47,0.03)" : (tierBg[s.tier_label] || "var(--bg2)"),
+      borderRadius: 4, padding: "10px 14px", marginBottom: 8,
+      border: `1px solid ${borderColor}30`, borderLeft: `4px solid ${borderColor}`,
+      cursor: "pointer",
+    }} onClick={() => setExpanded(!expanded)}>
+
+      {/* Row 1: Ticker, price, badges */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         <TVLink ticker={s.ticker}>
-          <span style={{ fontWeight: 700, fontSize: 14, color: "var(--accent)" }}>{s.ticker}</span>
+          <span style={{ fontWeight: 700, fontSize: 14, color: isShort ? "#d32f2f" : "var(--accent)" }}>{s.ticker}</span>
         </TVLink>
-        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>${s.price?.toFixed(2)}</span>
-        {s.gap_pct != null && (
+        <span style={{ fontSize: 12, fontWeight: 600 }}>${s.price?.toFixed(2)}</span>
+
+        {/* EP type badge */}
+        <span style={{
+          fontSize: 8, fontWeight: 800, padding: "2px 6px", borderRadius: 2,
+          background: epStyle.bg, color: epStyle.color, border: `1px solid ${epStyle.border}`,
+          letterSpacing: 0.5,
+        }}>{epStyle.label}</span>
+
+        {/* Kelly tier badge (long only) */}
+        {!isShort && s.tier_label && s.tier_label !== "WATCHLIST" && (
           <span style={{
-            fontSize: 10, fontWeight: 700, color: s.gap_pct >= 50 ? "#ff6d00" : s.gap_pct >= 30 ? "#2d7a3a" : "var(--text2)",
+            fontSize: 8, fontWeight: 800, padding: "2px 8px", borderRadius: 2,
+            background: `${tierColors[s.tier_label] || "#666"}18`,
+            color: tierColors[s.tier_label] || "#666",
+            border: `1px solid ${tierColors[s.tier_label] || "#666"}40`,
           }}>
-            +{s.gap_pct}%
+            {s.tier_label} {s.tier_sizing}
           </span>
         )}
-        <EPTypeBadge type={s.ep_type} />
-        {s.conviction_tier != null && (
-          <ConvictionTierBadge tier={s.conviction_tier} label={s.tier_label} color={s.tier_color} />
+
+        {/* Short MAGNA (short only) */}
+        {isShort && s.short_magna_score != null && (
+          <span style={{
+            fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
+            background: s.short_magna_score >= 4 ? "rgba(211,47,47,0.12)" : "var(--bg3)",
+            color: s.short_magna_score >= 4 ? "#d32f2f" : "var(--text3)",
+          }}>MAGNA {s.short_magna_score}/6</span>
         )}
-        {s.dollar_vol != null && s.dollar_vol < 5000000 && (
-          <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
-            background: "rgba(156,39,176,0.1)", color: "#9c27b0", border: "1px solid rgba(156,39,176,0.3)",
-            letterSpacing: 0.5 }}>
-            MICRO-CAP
-          </span>
+
+        {/* Micro-cap */}
+        {s.is_micro && (
+          <span style={{ fontSize: 7, fontWeight: 700, padding: "1px 5px", borderRadius: 2,
+            background: "rgba(156,39,176,0.08)", color: "#9c27b0" }}>MICRO</span>
         )}
-        <MagnaScoreBadge score={s.magna_score || 0} />
-        {s.short_pct_float != null && <ShortInterestBadge shortData={s} />}
-        {s.sales_accelerating && (
-          <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
-            background: "rgba(45,122,58,0.1)", color: "#2d7a3a", border: "1px solid rgba(45,122,58,0.3)" }}>
-            ACCEL REV {s.triple_digit ? "100%+" : ""}
-          </span>
+
+        {/* Entry quality */}
+        {intel.entry_quality && intel.entry_quality !== "POOR" && (
+          <span style={{
+            fontSize: 7, fontWeight: 700, padding: "1px 5px", borderRadius: 2,
+            background: intel.entry_quality === "EXCELLENT" ? "rgba(45,122,58,0.12)"
+              : intel.entry_quality === "GOOD" ? "rgba(255,152,0,0.1)" : "var(--bg3)",
+            color: intel.entry_quality === "EXCELLENT" ? "#2d7a3a"
+              : intel.entry_quality === "GOOD" ? "#ff9800" : "var(--text3)",
+          }}>{intel.entry_quality}</span>
         )}
-        {s.ep_warning && (
-          <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 2,
-            background: "rgba(255,87,34,0.1)", color: "#ff5722", border: "1px solid rgba(255,87,34,0.3)" }}>
-            {s.ep_warning}
-          </span>
-        )}
+
         {onQuickAdd && (
-          <button onClick={() => onQuickAdd(s)} style={{
-            marginLeft: "auto", fontSize: 9, padding: "2px 8px",
+          <button onClick={(e) => { e.stopPropagation(); onQuickAdd(s); }} style={{
+            marginLeft: "auto", fontSize: 8, padding: "2px 8px",
             background: "var(--bg3)", border: "1px solid var(--border)",
-            color: "var(--text2)", borderRadius: 2, cursor: "pointer",
-            fontFamily: "inherit",
+            color: "var(--text2)", borderRadius: 2, cursor: "pointer", fontFamily: "inherit",
           }}>+ Journal</button>
         )}
       </div>
 
-      {/* Tier description */}
-      {s.conviction_tier > 0 && s.tier_description && (
-        <div style={{
-          fontSize: 8, color: s.tier_color || "var(--text3)", marginBottom: 6,
-          fontWeight: 600, fontStyle: "italic",
-        }}>
-          {s.tier_description}
-        </div>
-      )}
-
-      {/* EP Details */}
-      <div style={{ fontSize: 9, color: "var(--text2)", marginBottom: 8 }}>
-        {s.ep_type_details}
-      </div>
-
-      {/* Sparkline for revenue */}
-      {s.sparkline_data && s.sparkline_data.length > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-          <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1 }}>REV GROWTH</span>
-          <SalesSparkline data={s.sparkline_data} />
-          <span style={{ fontSize: 8, color: "var(--text3)" }}>
-            {s.revenue_trend?.map(v => v != null ? `${v > 0 ? "+" : ""}${v}%` : "?").join(" > ")}
-          </span>
-        </div>
-      )}
-
-      {/* MAGNA score + Exit Strategy toggles */}
-      <div style={{ marginBottom: 8, display: "flex", gap: 6 }}>
-        <button onClick={() => setShowMagna(!showMagna)} style={{
-          fontSize: 8, padding: "2px 8px", background: "var(--bg3)",
-          border: "1px solid var(--border)", color: "var(--text3)",
-          borderRadius: 2, cursor: "pointer", fontFamily: "inherit",
-        }}>
-          {showMagna ? "Hide" : "Show"} MAGNA Details
-        </button>
-        {s.exit_strategy && (
-          <button onClick={() => setShowExit(!showExit)} style={{
-            fontSize: 8, padding: "2px 8px", background: showExit ? "rgba(41,98,255,0.1)" : "var(--bg3)",
-            border: `1px solid ${showExit ? "rgba(41,98,255,0.3)" : "var(--border)"}`,
-            color: showExit ? "#2962ff" : "var(--text3)",
-            borderRadius: 2, cursor: "pointer", fontFamily: "inherit",
-          }}>
-            {showExit ? "Hide" : "Show"} Exit Strategy
-          </button>
+      {/* Row 2: Key metrics inline */}
+      <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 10, color: "var(--text2)", flexWrap: "wrap" }}>
+        <span>Gap <b style={{ color: gapPct >= 0 ? "var(--green)" : "var(--red)" }}>{gapPct > 0 ? "+" : ""}{gapPct}%</b></span>
+        <span>Vol <b>{volRatio}x</b></span>
+        {!isShort && <span>MAGNA <b>{s.magna_score || 0}</b>/7</span>}
+        {s.ti65_label && s.ti65_label !== "N/A" && <span>TI65 <b>{s.ti65_label}</b></span>}
+        {s.tt_score > 0 && <span>TT <b>{s.tt_score}</b>/7</span>}
+        {isShort && s.ep_catalyst_label && (
+          <span style={{ color: "#d32f2f" }}>{s.ep_catalyst_label}</span>
         )}
       </div>
-      {showMagna && <div style={{ marginBottom: 6 }}><MagnaDetails details={s.magna_details} /></div>}
-      {showExit && <ExitStrategyCard exit={s.exit_strategy} sizing={s.position_sizing} />}
 
-      {/* Entry Tactic */}
-      {s.entry_tactic && <EntryTacticCard tactic={s.entry_tactic} />}
+      {/* Row 3: Entry zone + stop + R1 */}
+      {intel.entry_zone_low && (
+        <div style={{ display: "flex", gap: 14, marginTop: 5, fontSize: 10, flexWrap: "wrap" }}>
+          <span>
+            <span style={{ color: "var(--text3)", fontSize: 8 }}>ENTRY </span>
+            <b>${intel.entry_zone_low}-${intel.entry_zone_high}</b>
+          </span>
+          {intel.stop_price && (
+            <span>
+              <span style={{ color: "var(--text3)", fontSize: 8 }}>STOP </span>
+              <b style={{ color: "var(--red)" }}>${intel.stop_price}</b>
+            </span>
+          )}
+          {rLevels.r1 && (
+            <span>
+              <span style={{ color: "var(--text3)", fontSize: 8 }}>T1 </span>
+              <b style={{ color: "var(--green)" }}>${rLevels.r1}</b>
+            </span>
+          )}
+          {intel.risk_reward && (
+            <span>
+              <span style={{ color: "var(--text3)", fontSize: 8 }}>R:R </span>
+              <b>{intel.risk_reward}:1</b>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Expanded: full details */}
+      {expanded && (
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
+          {/* EP type details */}
+          <div style={{ fontSize: 9, color: "var(--text3)", marginBottom: 8 }}>{s.ep_type_details}</div>
+
+          {/* Tier reason */}
+          {s.tier_description && (
+            <div style={{ fontSize: 9, color: tierColors[s.tier_label] || "var(--text3)", marginBottom: 8, fontWeight: 600 }}>
+              {s.tier_description}
+            </div>
+          )}
+
+          {/* Price levels grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 6, marginBottom: 8 }}>
+            {intel.gap_fill_level && (
+              <div style={{ fontSize: 9, padding: "4px 8px", background: "var(--bg3)", borderRadius: 2 }}>
+                <div style={{ fontSize: 7, color: "var(--text3)", letterSpacing: 1 }}>GAP FILL</div>
+                <div style={{ fontWeight: 700 }}>${intel.gap_fill_level}</div>
+              </div>
+            )}
+            {intel.ema10 && (
+              <div style={{ fontSize: 9, padding: "4px 8px", background: "var(--bg3)", borderRadius: 2 }}>
+                <div style={{ fontSize: 7, color: "var(--text3)", letterSpacing: 1 }}>EMA10</div>
+                <div style={{ fontWeight: 700 }}>${intel.ema10}</div>
+              </div>
+            )}
+            {intel.ema20 && (
+              <div style={{ fontSize: 9, padding: "4px 8px", background: "var(--bg3)", borderRadius: 2 }}>
+                <div style={{ fontSize: 7, color: "var(--text3)", letterSpacing: 1 }}>EMA20</div>
+                <div style={{ fontWeight: 700 }}>${intel.ema20}</div>
+              </div>
+            )}
+            {intel.atr && (
+              <div style={{ fontSize: 9, padding: "4px 8px", background: "var(--bg3)", borderRadius: 2 }}>
+                <div style={{ fontSize: 7, color: "var(--text3)", letterSpacing: 1 }}>ATR(14)</div>
+                <div style={{ fontWeight: 700 }}>${intel.atr}</div>
+              </div>
+            )}
+            {rLevels.r2 && (
+              <div style={{ fontSize: 9, padding: "4px 8px", background: "var(--bg3)", borderRadius: 2 }}>
+                <div style={{ fontSize: 7, color: "var(--text3)", letterSpacing: 1 }}>T2 (2R)</div>
+                <div style={{ fontWeight: 700, color: "var(--green)" }}>${rLevels.r2}</div>
+              </div>
+            )}
+            {rLevels.r3 && (
+              <div style={{ fontSize: 9, padding: "4px 8px", background: "var(--bg3)", borderRadius: 2 }}>
+                <div style={{ fontSize: 7, color: "var(--text3)", letterSpacing: 1 }}>T3 (3R)</div>
+                <div style={{ fontWeight: 700, color: "var(--green)" }}>${rLevels.r3}</div>
+              </div>
+            )}
+            {intel.risk_dollars && (
+              <div style={{ fontSize: 9, padding: "4px 8px", background: "var(--bg3)", borderRadius: 2 }}>
+                <div style={{ fontSize: 7, color: "var(--text3)", letterSpacing: 1 }}>RISK/SHARE</div>
+                <div style={{ fontWeight: 700, color: "var(--red)" }}>${intel.risk_dollars}</div>
+              </div>
+            )}
+            {isShort && intel.bounce_resistance && (
+              <div style={{ fontSize: 9, padding: "4px 8px", background: "var(--bg3)", borderRadius: 2 }}>
+                <div style={{ fontSize: 7, color: "var(--text3)", letterSpacing: 1 }}>BOUNCE HIGH</div>
+                <div style={{ fontWeight: 700 }}>${intel.bounce_resistance}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Entry notes */}
+          {intel.entry_notes && intel.entry_notes.length > 0 && (
+            <div style={{ fontSize: 8, color: "var(--text3)" }}>
+              {intel.entry_notes.map((n, i) => (
+                <div key={i} style={{ marginBottom: 2, color: n.startsWith("WARNING") || n.startsWith("CAUTION") ? "var(--red)" : "var(--text3)" }}>
+                  {n}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Short MAGNA details */}
+          {isShort && s.short_magna_details && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, marginBottom: 4, fontWeight: 600 }}>SHORT MAGNA CRITERIA</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {Object.entries(s.short_magna_details).map(([k, v]) => (
+                  <span key={k} style={{
+                    fontSize: 8, padding: "2px 6px", borderRadius: 2,
+                    background: v.met ? "rgba(211,47,47,0.08)" : "var(--bg3)",
+                    color: v.met ? "#d32f2f" : "var(--text3)",
+                    border: `1px solid ${v.met ? "rgba(211,47,47,0.3)" : "var(--border)"}`,
+                  }}>
+                    {v.met ? "+" : "-"} {v.label}: {v.reason}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2899,12 +3012,7 @@ function StockbeeEPDashboard({ onQuickAdd }) {
   const [epData, setEpData] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
-  const [subTab, setSubTab] = React.useState("overview");
-  const [minMagna, setMinMagna] = React.useState(3);
-  const [showAllScores, setShowAllScores] = React.useState(false);
-  const [tierFilter, setTierFilter] = React.useState("focused");
-  const [minGap, setMinGap] = React.useState(0);
-  const [typeFilter, setTypeFilter] = React.useState("all");
+  const [view, setView] = React.useState("actionable");
 
   const API = process.env.REACT_APP_API_URL || "";
 
@@ -2927,11 +3035,8 @@ function StockbeeEPDashboard({ onQuickAdd }) {
   };
 
   if (loading && !epData) return (
-    <div style={{ padding: 40, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
-      Loading EP Dashboard...
-    </div>
+    <div style={{ padding: 40, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>Loading EP Scanner...</div>
   );
-
   if (error && !epData) return (
     <div style={{ padding: 40, textAlign: "center" }}>
       <div style={{ color: "#c43a2a", fontSize: 11, marginBottom: 8 }}>Error: {error}</div>
@@ -2941,528 +3046,182 @@ function StockbeeEPDashboard({ onQuickAdd }) {
 
   const data = epData || {};
   const summary = data.summary || {};
-  const allEps = data.all_eps || [];
-  const filteredEps = allEps.filter(e => {
-    if (!showAllScores && (e.magna_score || 0) < minMagna) return false;
-    if (minGap > 0 && (e.gap_pct || 0) < minGap) return false;
-    if (typeFilter !== "all" && e.ep_type !== typeFilter) return false;
-    return true;
-  });
   const breadth = data.sp500_breadth || {};
-  const watchlist = data.ep_watchlist || [];
-  const volSpikes = data.volume_spikes || [];
-  const subTabs = ["overview", "classic", "delayed", "9m", "story", "momentum", "watchlist", "volume"];
+  const bearRegime = data.bear_regime || false;
+  const actionable = data.actionable_eps || [];
+  const overflow = data.actionable_overflow || [];
+  const shortEps = data.all_short_eps || [];
+  const watchlistEps = data.watchlist_eps || [];
+  const displayEps = data.display_eps || [...actionable, ...shortEps];
 
   return (
     <div>
-      {/* S&P Breadth Market Regime */}
+      {/* Market regime bar */}
       <BreadthGauge breadth={breadth} />
 
-      {/* Sector RS one-liner */}
-      {data.sector_rs_summary && (data.sector_rs_summary.leading?.length > 0 || data.sector_rs_summary.lagging?.length > 0) && (
+      {/* Bear regime warning */}
+      {bearRegime && (
         <div style={{
-          fontSize: 9, color: "var(--text3)", marginTop: 8, padding: "5px 12px",
-          background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 3,
-          display: "flex", gap: 6, flexWrap: "wrap",
+          marginTop: 8, padding: "8px 14px", borderRadius: 3, fontSize: 10, fontWeight: 600,
+          background: "rgba(211,47,47,0.08)", border: "1px solid rgba(211,47,47,0.3)", color: "#d32f2f",
         }}>
-          <span style={{ fontSize: 8, letterSpacing: 1, fontWeight: 600, color: "var(--text3)" }}>SECTORS</span>
-          {data.sector_rs_summary.leading?.length > 0 && (
-            <span>
-              <span style={{ color: "#2d7a3a", fontWeight: 600 }}>Leading: </span>
-              {data.sector_rs_summary.leading.join(", ")}
-            </span>
-          )}
-          {data.sector_rs_summary.leading?.length > 0 && data.sector_rs_summary.lagging?.length > 0 && (
-            <span style={{ color: "var(--border)" }}>|</span>
-          )}
-          {data.sector_rs_summary.lagging?.length > 0 && (
-            <span>
-              <span style={{ color: "var(--red)", fontWeight: 600 }}>Lagging: </span>
-              {data.sector_rs_summary.lagging.join(", ")}
-            </span>
-          )}
+          BEAR REGIME — S&amp;P breadth below 40%. Short EPs promoted. Only A+ long setups.
         </div>
       )}
 
-      {/* Summary bar */}
-      <div style={{
-        display: "flex", gap: 8, marginTop: 12, marginBottom: 14, flexWrap: "wrap",
-        alignItems: "center",
-      }}>
-        <div style={{
-          padding: "6px 12px", borderRadius: 3, background: "var(--bg2)",
-          border: "1px solid var(--border)", fontSize: 10,
-        }}>
-          <span style={{ color: "var(--text3)", fontSize: 8, letterSpacing: 1 }}>TOTAL EPs </span>
-          <span style={{ fontWeight: 700, color: "var(--accent)" }}>{summary.total_eps || 0}</span>
-        </div>
-        {["classic", "delayed", "nine_m", "story", "mom_burst"].map(key => {
-          const labels = { classic: "Classic", delayed: "Delayed", nine_m: "9M", story: "Story", mom_burst: "Mom Burst" };
-          const val = summary[key] || 0;
-          if (val === 0) return null;
-          return (
-            <div key={key} style={{
-              padding: "4px 10px", borderRadius: 3, background: "var(--bg2)",
-              border: "1px solid var(--border)", fontSize: 9,
-            }}>
-              <span style={{ color: "var(--text3)" }}>{labels[key]} </span>
-              <span style={{ fontWeight: 700 }}>{val}</span>
-            </div>
-          );
-        })}
-        <div style={{
-          padding: "4px 10px", borderRadius: 3,
-          background: "rgba(45,122,58,0.08)", border: "1px solid rgba(45,122,58,0.2)",
-          fontSize: 9,
-        }}>
-          <span style={{ color: "#2d7a3a", fontWeight: 700 }}>
-            {summary.high_conviction || 0} High Conviction (5+)
+      {/* Summary chips + actions */}
+      <div style={{ display: "flex", gap: 6, marginTop: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        {/* Tier counts */}
+        {summary.tier1_max > 0 && (
+          <span style={{ fontSize: 9, fontWeight: 700, padding: "4px 10px", borderRadius: 3,
+            background: "rgba(212,175,55,0.1)", color: "#d4af37", border: "1px solid rgba(212,175,55,0.3)" }}>
+            {summary.tier1_max} MAX
           </span>
-        </div>
-        {(summary.tier1_count > 0 || summary.tier2_count > 0) && (
-          <>
-            {summary.tier1_count > 0 && (
-              <div style={{
-                padding: "4px 10px", borderRadius: 3,
-                background: "rgba(45,122,58,0.12)", border: "1px solid rgba(45,122,58,0.3)",
-                fontSize: 9,
-              }}>
-                <span style={{ color: "#2d7a3a", fontWeight: 700 }}>
-                  {summary.tier1_count} Tier 1
-                </span>
-              </div>
-            )}
-            {summary.tier2_count > 0 && (
-              <div style={{
-                padding: "4px 10px", borderRadius: 3,
-                background: "rgba(255,109,0,0.12)", border: "1px solid rgba(255,109,0,0.3)",
-                fontSize: 9,
-              }}>
-                <span style={{ color: "#ff6d00", fontWeight: 700 }}>
-                  {summary.tier2_count} Tier 2
-                </span>
-              </div>
-            )}
-          </>
         )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+        {summary.tier2_strong > 0 && (
+          <span style={{ fontSize: 9, fontWeight: 700, padding: "4px 10px", borderRadius: 3,
+            background: "rgba(255,109,0,0.08)", color: "#ff6d00", border: "1px solid rgba(255,109,0,0.3)" }}>
+            {summary.tier2_strong} STRONG
+          </span>
+        )}
+        {summary.tier3_normal > 0 && (
+          <span style={{ fontSize: 9, fontWeight: 700, padding: "4px 10px", borderRadius: 3,
+            background: "rgba(45,122,58,0.06)", color: "#2d7a3a", border: "1px solid rgba(45,122,58,0.2)" }}>
+            {summary.tier3_normal} NORMAL
+          </span>
+        )}
+        {summary.total_short_eps > 0 && (
+          <span style={{ fontSize: 9, fontWeight: 700, padding: "4px 10px", borderRadius: 3,
+            background: "rgba(211,47,47,0.08)", color: "#d32f2f", border: "1px solid rgba(211,47,47,0.3)" }}>
+            {summary.total_short_eps} SHORT
+          </span>
+        )}
+        <span style={{ fontSize: 9, padding: "4px 10px", borderRadius: 3,
+          background: "var(--bg2)", border: "1px solid var(--border)", color: "var(--text3)" }}>
+          {summary.watchlist_only || 0} watchlist
+        </span>
+
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
           <button onClick={triggerScan} style={{
             fontSize: 9, padding: "3px 10px", cursor: "pointer",
-            background: "var(--bg3)", border: "1px solid var(--border)",
-            color: "var(--text2)", borderRadius: 2,
-          }}>Run EP Scan</button>
+            background: "var(--bg3)", border: "1px solid var(--border)", color: "var(--text2)", borderRadius: 2,
+          }}>Run Scan</button>
           <button onClick={fetchData} style={{
             fontSize: 9, padding: "3px 10px", cursor: "pointer",
-            background: "var(--bg3)", border: "1px solid var(--border)",
-            color: "var(--text2)", borderRadius: 2,
+            background: "var(--bg3)", border: "1px solid var(--border)", color: "var(--text2)", borderRadius: 2,
           }}>Refresh</button>
         </div>
       </div>
 
-      {/* Filter controls */}
-      <div style={{
-        display: "flex", gap: 10, marginBottom: 12, padding: "8px 12px",
-        background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 3,
-        alignItems: "center", flexWrap: "wrap",
-      }}>
-        {/* Gap filter */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, fontWeight: 600 }}>MIN GAP</span>
-          {[0, 10, 30, 50, 75].map(g => (
-            <button key={g} onClick={() => setMinGap(g)} style={{
-              fontSize: 8, padding: "2px 6px", cursor: "pointer",
-              background: minGap === g ? (g >= 30 ? "rgba(45,122,58,0.15)" : "var(--accent)") : "var(--bg3)",
-              color: minGap === g ? (g >= 30 ? "#2d7a3a" : "#fff") : "var(--text3)",
-              border: `1px solid ${minGap === g ? (g >= 30 ? "rgba(45,122,58,0.4)" : "var(--accent)") : "var(--border)"}`,
-              borderRadius: 2, fontWeight: minGap === g ? 700 : 400,
-            }}>
-              {g === 0 ? "All" : `${g}%+`}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ width: 1, height: 16, background: "var(--border)" }} />
-
-        {/* Type filter */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, fontWeight: 600 }}>TYPE</span>
-          {[
-            { key: "all", label: "All" },
-            { key: "CLASSIC", label: "Classic" },
-            { key: "STORY", label: "Story" },
-            { key: "9M", label: "9M" },
-            { key: "DELAYED", label: "Delayed" },
-          ].map(t => (
-            <button key={t.key} onClick={() => setTypeFilter(t.key)} style={{
-              fontSize: 8, padding: "2px 6px", cursor: "pointer",
-              background: typeFilter === t.key ? "var(--accent)" : "var(--bg3)",
-              color: typeFilter === t.key ? "#fff" : "var(--text3)",
-              border: `1px solid ${typeFilter === t.key ? "var(--accent)" : "var(--border)"}`,
-              borderRadius: 2, fontWeight: typeFilter === t.key ? 700 : 400,
-            }}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ width: 1, height: 16, background: "var(--border)" }} />
-
-        {/* MAGNA filter */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 8, color: "var(--text3)", letterSpacing: 1, fontWeight: 600 }}>MAGNA</span>
-          <label style={{ fontSize: 8, color: "var(--text3)", display: "flex", alignItems: "center", gap: 3 }}>
-            <input type="checkbox" checked={showAllScores}
-              onChange={e => setShowAllScores(e.target.checked)}
-              style={{ width: 10, height: 10 }} />
-            Show all
-          </label>
-          {!showAllScores && (
-            <span style={{ fontSize: 8, color: "var(--text3)" }}>{minMagna}+</span>
-          )}
-        </div>
-
-        <div style={{ marginLeft: "auto", fontSize: 8, color: "var(--text3)" }}>
-          {filteredEps.length} of {allEps.length} EPs shown
-        </div>
-      </div>
-
-      {/* Sub-tabs */}
-      <div style={{ display: "flex", gap: 2, marginBottom: 14, flexWrap: "wrap" }}>
-        {subTabs.map(t => (
-          <button key={t} onClick={() => setSubTab(t)} style={{
-            fontSize: 9, padding: "4px 12px", cursor: "pointer",
-            background: t === subTab ? "var(--accent)" : "var(--bg3)",
-            color: t === subTab ? "#fff" : "var(--text2)",
-            border: `1px solid ${t === subTab ? "var(--accent)" : "var(--border)"}`,
-            borderRadius: 2, fontWeight: t === subTab ? 700 : 400,
-            textTransform: "capitalize",
-          }}>
-            {t === "9m" ? "9M Volume" : t === "volume" ? "Vol Spikes" : t}
-            {t === "overview" && ` (${filteredEps.length})`}
-            {t === "classic" && ` (${(data.classic_eps || []).length})`}
-            {t === "delayed" && ` (${(data.delayed_eps || []).length})`}
-            {t === "9m" && ` (${(data.nine_m_eps || []).length})`}
-            {t === "story" && ` (${(data.story_eps || []).length})`}
-            {t === "momentum" && ` (${(data.mom_bursts || []).length})`}
-            {t === "watchlist" && ` (${watchlist.length})`}
-            {t === "volume" && ` (${volSpikes.length})`}
-          </button>
+      {/* View tabs — simple */}
+      <div style={{ display: "flex", gap: 2, marginBottom: 12 }}>
+        {[
+          { key: "actionable", label: `Actionable (${displayEps.length})` },
+          { key: "shorts", label: `Shorts (${shortEps.length})` },
+          { key: "watchlist", label: `Watchlist (${watchlistEps.length})` },
+          { key: "all", label: `All (${(data.all_eps || []).length})` },
+        ].map(t => (
+          <button key={t.key} onClick={() => setView(t.key)} style={{
+            fontSize: 9, padding: "5px 14px", cursor: "pointer",
+            background: view === t.key ? "var(--accent)" : "var(--bg3)",
+            color: view === t.key ? "#fff" : "var(--text2)",
+            border: `1px solid ${view === t.key ? "var(--accent)" : "var(--border)"}`,
+            borderRadius: 2, fontWeight: view === t.key ? 700 : 400,
+          }}>{t.label}</button>
         ))}
       </div>
 
-      {/* Content */}
-      {subTab === "overview" && (() => {
-        // Separate into tradeable (Tier 1+2) and the rest
-        const tradeable = filteredEps.filter(e => e.conviction_tier > 0);
-        const rest = filteredEps.filter(e => !e.conviction_tier || e.conviction_tier === 0);
-
-        // Top 15 watchlist: rank by composite score (MAGNA * 2 + gap_pct/10 + vol_ratio/5)
-        const ranked = [...rest].sort((a, b) => {
-          const scoreA = (a.magna_score || 0) * 2 + (a.gap_pct || 0) / 10 + (a.vol_ratio || 0) / 5;
-          const scoreB = (b.magna_score || 0) * 2 + (b.gap_pct || 0) / 10 + (b.vol_ratio || 0) / 5;
-          return scoreB - scoreA;
-        });
-        const top15 = ranked.slice(0, 15);
-
-        const viewItems = tierFilter === "focused" ? [...tradeable, ...top15]
-          : tierFilter === "tradeable" ? tradeable
-          : tierFilter === "all" ? filteredEps
-          : tierFilter === "tier1" ? filteredEps.filter(e => e.conviction_tier === 1)
-          : tierFilter === "tier2" ? filteredEps.filter(e => e.conviction_tier === 2)
-          : filteredEps;
-
-        return (
-          <div>
-            {/* View mode buttons */}
-            <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center" }}>
-              {[
-                { key: "focused", label: `Focused (${tradeable.length} trade + ${top15.length} watch)` },
-                { key: "tradeable", label: `Tradeable Only (${tradeable.length})` },
-                { key: "all", label: `All (${filteredEps.length})` },
-              ].map(f => (
-                <button key={f.key} onClick={() => setTierFilter(f.key)} style={{
-                  fontSize: 8, padding: "3px 10px", cursor: "pointer",
-                  background: tierFilter === f.key ? "var(--accent)" : "var(--bg3)",
-                  color: tierFilter === f.key ? "#fff" : "var(--text3)",
-                  border: `1px solid ${tierFilter === f.key ? "var(--accent)" : "var(--border)"}`,
-                  borderRadius: 2, fontWeight: tierFilter === f.key ? 700 : 400,
-                }}>
-                  {f.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Tradeable section */}
-            {(tierFilter === "focused" || tierFilter === "tradeable") && (
-              <div style={{ marginBottom: tradeable.length > 0 ? 16 : 0 }}>
-                {tradeable.length > 0 ? (
-                  <>
-                    <div style={{
-                      fontSize: 9, fontWeight: 700, color: "#2d7a3a", letterSpacing: 1,
-                      marginBottom: 8, padding: "4px 0",
-                      borderBottom: "1px solid rgba(45,122,58,0.2)",
-                    }}>
-                      TRADEABLE ({tradeable.length})
-                    </div>
-                    {tradeable.map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
-                  </>
-                ) : (
-                  <div style={{
-                    padding: "12px 14px", marginBottom: 12, borderRadius: 3, fontSize: 10,
-                    background: "rgba(45,122,58,0.04)", border: "1px solid rgba(45,122,58,0.15)",
-                    color: "var(--text3)",
-                  }}>
-                    No Tier 1/2 setups today. Tier 1 (gap 30%+ micro-cap) triggers ~2x/month.
-                    Tier 2 (gap 50%+ STORY) triggers ~1x/month. This is normal.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Top watchlist section */}
-            {tierFilter === "focused" && top15.length > 0 && (
-              <div>
-                <div style={{
-                  fontSize: 9, fontWeight: 700, color: "var(--text3)", letterSpacing: 1,
-                  marginBottom: 8, padding: "4px 0",
-                  borderBottom: "1px solid var(--border)",
-                }}>
-                  TOP WATCHLIST ({top15.length}) — ranked by MAGNA + gap + volume
-                </div>
-                {top15.map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
-              </div>
-            )}
-
-            {/* All view */}
-            {tierFilter === "all" && (
-              viewItems.length === 0 ? (
-                <div style={{ padding: 40, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
-                  No EP setups detected matching current filters.
-                  {data.status === "no_data" && " Run an EP scan to populate."}
-                </div>
-              ) : (
-                viewItems.map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)
-              )
-            )}
-          </div>
-        );
-      })()}
-
-      {subTab === "classic" && (
+      {/* Actionable view — the default */}
+      {view === "actionable" && (
         <div>
-          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
-            background: "rgba(255,152,0,0.06)", border: "1px solid rgba(255,152,0,0.2)", borderRadius: 3 }}>
-            <strong>Classic EP:</strong> Earnings/sales catalyst + gap up 10%+ + volume 2x+ average.
-            Highest conviction when MAGNA score is 5+.
-          </div>
-          {(data.classic_eps || []).map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
-          {(data.classic_eps || []).length === 0 && (
-            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>No Classic EPs detected today.</div>
-          )}
-        </div>
-      )}
-
-      {subTab === "delayed" && (
-        <div>
-          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
-            background: "rgba(41,98,255,0.06)", border: "1px solid rgba(41,98,255,0.2)", borderRadius: 3 }}>
-            <strong>Delayed EP:</strong> Classic EP 5-30 days ago, consolidated (pulled back &lt;50% of gap move),
-            now breaking above EP day high on above-average volume.
-          </div>
-          {(data.delayed_eps || []).map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
-          {(data.delayed_eps || []).length === 0 && (
-            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>No Delayed EPs detected. Check the Watchlist tab for candidates consolidating.</div>
-          )}
-        </div>
-      )}
-
-      {subTab === "9m" && (
-        <div>
-          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
-            background: "rgba(156,39,176,0.06)", border: "1px solid rgba(156,39,176,0.2)", borderRadius: 3 }}>
-            <strong>9M EP:</strong> Stock trades 9 million+ shares in a single day (or 3x its 50-day average volume).
-            No fundamental catalyst required — pure volume signal.
-          </div>
-          {(data.nine_m_eps || []).map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
-          {(data.nine_m_eps || []).length === 0 && (
-            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>No 9M EP signals today.</div>
-          )}
-        </div>
-      )}
-
-      {subTab === "story" && (
-        <div>
-          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
-            background: "rgba(255,87,34,0.06)", border: "1px solid rgba(255,87,34,0.2)", borderRadius: 3 }}>
-            <strong>Story EP (Sugar Baby):</strong> Gap up 10%+ on news/hype WITHOUT strong fundamental backing.
-            Momentum plays only — tight stops, don't hold.
-          </div>
-          {(data.story_eps || []).map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
-          {(data.story_eps || []).length === 0 && (
-            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>No Story EPs detected today.</div>
-          )}
-        </div>
-      )}
-
-      {subTab === "momentum" && (
-        <div>
-          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
-            background: "rgba(0,150,136,0.06)", border: "1px solid rgba(0,150,136,0.2)", borderRadius: 3 }}>
-            <strong>Momentum Burst:</strong> Stock in established uptrend, pulls back to 10/20 EMA on low volume,
-            then breaks out of 3-5 day tight consolidation on increasing volume.
-          </div>
-          {(data.mom_bursts || []).map(s => <StockbeeEPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)}
-          {(data.mom_bursts || []).length === 0 && (
-            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>No Momentum Burst setups detected today.</div>
-          )}
-        </div>
-      )}
-
-      {subTab === "watchlist" && (() => {
-        // Add breakout proximity and sort by it (closest to breakout first)
-        const enrichedWatchlist = watchlist.map(w => {
-          const proximity = (w.ep_day_high && w.current_price)
-            ? Math.round((w.ep_day_high - w.current_price) / w.ep_day_high * 1000) / 10
-            : 999;
-          return { ...w, breakout_proximity: proximity };
-        }).sort((a, b) => a.breakout_proximity - b.breakout_proximity);
-
-        const nearBreakout = enrichedWatchlist.filter(w => w.breakout_proximity <= 5);
-
-        return (
-          <div>
-            <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
-              background: "rgba(41,98,255,0.06)", border: "1px solid rgba(41,98,255,0.2)", borderRadius: 3 }}>
-              <strong>EP Watchlist:</strong> Tracks Classic and 9M EPs for delayed breakout entries.
-              Sorted by proximity to EP day high breakout. Auto-removed after 30 days.
-              {nearBreakout.length > 0 && (
-                <span style={{ color: "#2d7a3a", fontWeight: 700 }}>
-                  {" "}{nearBreakout.length} stock{nearBreakout.length > 1 ? "s" : ""} within 5% of breakout!
-                </span>
-              )}
-            </div>
-            {enrichedWatchlist.length === 0 ? (
-              <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
-                No active EP watchlist entries. Classic and 9M EPs are automatically tracked.
-              </div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                      {["Ticker", "Type", "EP Date", "Days", "EP High", "Current", "To Breakout", "Consol Depth", "vs EP Close", "MAGNA"].map(h => (
-                        <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 8,
-                          color: "var(--text3)", letterSpacing: 1, fontWeight: 600 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {enrichedWatchlist.map(w => {
-                      const isNear = w.breakout_proximity <= 5;
-                      const isAbove = w.breakout_proximity <= 0;
-                      return (
-                        <tr key={w.ticker + w.ep_date} style={{
-                          borderBottom: "1px solid var(--border)",
-                          background: isAbove ? "rgba(45,122,58,0.06)" : isNear ? "rgba(255,152,0,0.04)" : "transparent",
-                        }}>
-                          <td style={{ padding: "6px 8px", fontWeight: 700 }}>
-                            <TVLink ticker={w.ticker}>{w.ticker}</TVLink>
-                            {isAbove && <span style={{ fontSize: 7, fontWeight: 700, color: "#2d7a3a", marginLeft: 4 }}>BREAKOUT</span>}
-                            {isNear && !isAbove && <span style={{ fontSize: 7, fontWeight: 700, color: "#ff9800", marginLeft: 4 }}>NEAR</span>}
-                          </td>
-                          <td style={{ padding: "6px 8px" }}>
-                            <EPTypeBadge type={w.ep_type} />
-                          </td>
-                          <td style={{ padding: "6px 8px", color: "var(--text3)" }}>{w.ep_date}</td>
-                          <td style={{ padding: "6px 8px", fontWeight: 600 }}>{w.days_watched}d</td>
-                          <td style={{ padding: "6px 8px" }}>${w.ep_day_high?.toFixed(2)}</td>
-                          <td style={{ padding: "6px 8px", fontWeight: 600 }}>${w.current_price?.toFixed(2)}</td>
-                          <td style={{
-                            padding: "6px 8px", fontWeight: 700,
-                            color: isAbove ? "#2d7a3a" : isNear ? "#ff9800" : "var(--text)",
-                          }}>
-                            {w.breakout_proximity <= 0 ? "ABOVE" : `${w.breakout_proximity}%`}
-                          </td>
-                          <td style={{
-                            padding: "6px 8px", fontWeight: 600,
-                            color: (w.consolidation_depth || 0) > 15 ? "var(--red)" : "var(--text)",
-                          }}>
-                            {w.consolidation_depth != null ? `-${w.consolidation_depth}%` : "—"}
-                          </td>
-                          <td style={{
-                            padding: "6px 8px", fontWeight: 600,
-                            color: (w.pct_vs_ep_close || 0) >= 0 ? "var(--green)" : "var(--red)",
-                          }}>
-                            {w.pct_vs_ep_close != null ? `${w.pct_vs_ep_close > 0 ? "+" : ""}${w.pct_vs_ep_close}%` : "—"}
-                          </td>
-                          <td style={{ padding: "6px 8px" }}>
-                            <MagnaScoreBadge score={w.magna_score || 0} size="small" />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {subTab === "volume" && (
-        <div>
-          <div style={{ fontSize: 10, color: "var(--text3)", marginBottom: 10, padding: "8px 12px",
-            background: "rgba(156,39,176,0.06)", border: "1px solid rgba(156,39,176,0.2)", borderRadius: 3 }}>
-            <strong>Volume Spike Scanner:</strong> Stocks trading 3x+ their 50-day average volume or 9M+ shares.
-            Sorted by volume ratio. These are potential 9M EP candidates.
-          </div>
-          {volSpikes.length === 0 ? (
-            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
-              No volume spikes detected today.
+          {displayEps.length === 0 ? (
+            <div style={{
+              padding: "20px 14px", borderRadius: 3, fontSize: 10,
+              background: "var(--bg2)", border: "1px solid var(--border)", color: "var(--text3)",
+              textAlign: "center",
+            }}>
+              No actionable setups today. Kelly tiers (MAX/STRONG/NORMAL) trigger ~2-3x/month. This is normal.
+              {data.status === "no_data" && " Run a scan to populate."}
             </div>
           ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
-                <thead>
-                  <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                    {["Ticker", "Price", "Chg %", "Volume", "Avg 50d", "Vol Ratio", "9M+", "Catalyst"].map(h => (
-                      <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 8,
-                        color: "var(--text3)", letterSpacing: 1, fontWeight: 600 }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {volSpikes.slice(0, 50).map(v => (
-                    <tr key={v.ticker} style={{ borderBottom: "1px solid var(--border)" }}>
-                      <td style={{ padding: "6px 8px", fontWeight: 700 }}>
-                        <TVLink ticker={v.ticker}>{v.ticker}</TVLink>
-                      </td>
-                      <td style={{ padding: "6px 8px" }}>${v.price?.toFixed(2)}</td>
-                      <td style={{
-                        padding: "6px 8px", fontWeight: 600,
-                        color: (v.chg_pct || 0) >= 0 ? "var(--green)" : "var(--red)",
-                      }}>
-                        {v.chg_pct > 0 ? "+" : ""}{v.chg_pct}%
-                      </td>
-                      <td style={{ padding: "6px 8px" }}>{(v.volume / 1e6).toFixed(1)}M</td>
-                      <td style={{ padding: "6px 8px", color: "var(--text3)" }}>{(v.adv_50 / 1e6).toFixed(1)}M</td>
-                      <td style={{ padding: "6px 8px", fontWeight: 700, color: v.vol_ratio >= 5 ? "#9c27b0" : "var(--accent)" }}>
-                        {v.vol_ratio}x
-                      </td>
-                      <td style={{ padding: "6px 8px" }}>
-                        {v.is_9m ? (
-                          <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 2,
-                            background: "rgba(156,39,176,0.12)", color: "#9c27b0" }}>9M+</span>
-                        ) : "—"}
-                      </td>
-                      <td style={{ padding: "6px 8px", fontSize: 9, color: "var(--text3)", maxWidth: 200 }}>
-                        {v.catalyst}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <>
+              {/* Long actionable */}
+              {actionable.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: "#2d7a3a", letterSpacing: 1, marginBottom: 6,
+                    paddingBottom: 4, borderBottom: "1px solid rgba(45,122,58,0.2)" }}>
+                    LONG ({actionable.length})
+                  </div>
+                  {actionable.map(s => <EPCard key={s.ticker + "L"} s={s} onQuickAdd={onQuickAdd} />)}
+                </div>
+              )}
+
+              {/* Overflow (extra tier 1-3 beyond max positions) */}
+              {overflow.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 9, fontWeight: 600, color: "var(--text3)", letterSpacing: 1, marginBottom: 6,
+                    paddingBottom: 4, borderBottom: "1px solid var(--border)" }}>
+                    OVERFLOW ({overflow.length}) — beyond max 3 positions
+                  </div>
+                  {overflow.map(s => <EPCard key={s.ticker + "O"} s={s} onQuickAdd={onQuickAdd} />)}
+                </div>
+              )}
+
+              {/* Short EPs */}
+              {shortEps.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: "#d32f2f", letterSpacing: 1, marginBottom: 6,
+                    paddingBottom: 4, borderBottom: "1px solid rgba(211,47,47,0.2)" }}>
+                    SHORT ({shortEps.length})
+                  </div>
+                  {shortEps.map(s => <EPCard key={s.ticker + "S"} s={s} onQuickAdd={onQuickAdd} />)}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Shorts only */}
+      {view === "shorts" && (
+        <div>
+          {shortEps.length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
+              No short EPs detected. Requires gap down 20%+ on 3x volume.
             </div>
+          ) : (
+            shortEps.map(s => <EPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)
+          )}
+        </div>
+      )}
+
+      {/* Watchlist */}
+      {view === "watchlist" && (
+        <div>
+          {watchlistEps.length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
+              No watchlist EPs. All detected setups met Kelly tier criteria.
+            </div>
+          ) : (
+            watchlistEps.slice(0, 25).map(s => <EPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)
+          )}
+          {watchlistEps.length > 25 && (
+            <div style={{ fontSize: 9, color: "var(--text3)", textAlign: "center", padding: 8 }}>
+              +{watchlistEps.length - 25} more watchlist setups not shown
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* All */}
+      {view === "all" && (
+        <div>
+          {(data.all_eps || []).length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center", color: "var(--text3)", fontSize: 11 }}>
+              No EP setups detected.{data.status === "no_data" && " Run a scan."}
+            </div>
+          ) : (
+            (data.all_eps || []).slice(0, 50).map(s => <EPCard key={s.ticker} s={s} onQuickAdd={onQuickAdd} />)
           )}
         </div>
       )}
