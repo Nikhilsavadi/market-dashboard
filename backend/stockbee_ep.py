@@ -317,6 +317,10 @@ def calculate_magna_score(ticker: str, df: pd.DataFrame,
     else:
         color = "red"
 
+    # Summary log — kept permanently for debugging MAGNA scoring issues
+    if score == 0 and fundamentals:
+        print(f"[MAGNA] {ticker}: 0/7 despite having fundamentals — check criteria thresholds")
+
     return {
         "magna_score": score,
         "magna_details": details,
@@ -626,9 +630,15 @@ def _detect_9m_ep(df: pd.DataFrame, cfg: dict) -> dict:
             prior_close = float(closes.iloc[i - 1]) if i > 0 else day_close
             gap_pct = (float(df["open"].iloc[i]) - prior_close) / prior_close * 100 if prior_close > 0 else 0
 
-            # Require meaningful price move — gap ≥3% OR intraday range ≥5%
-            intraday_range = (day_high - day_low) / day_low * 100 if day_low > 0 else 0
-            if abs(gap_pct) < 3 and intraday_range < 5:
+            # Require meaningful POSITIVE price move for long 9M EP
+            # Gap must be positive (up) — negative gaps are short EPs only
+            if gap_pct < 0:
+                continue
+
+            # Minimum gap threshold: 10% to qualify as EP setup
+            # (consistent with classic_ep_gap_pct and story_ep_gap_pct)
+            # Volume alone without a significant gap is not an EP
+            if gap_pct < cfg["classic_ep_gap_pct"]:
                 continue
 
             catalyst = "Unknown catalyst - pure volume signal"
@@ -3288,6 +3298,10 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
     cfg = {**EP_CONFIG, **(config or {})}
     fund_data = fundamentals or {}
 
+    total_tickers = len(bars_data)
+    tickers_with_fund = sum(1 for t in bars_data if fund_data.get(t))
+    print(f"[ep-scan] MAGNA data coverage: {tickers_with_fund}/{total_tickers} tickers have fundamentals")
+
     # Get past EPs from watchlist for delayed EP detection (long)
     past_eps_raw = get_ep_watchlist("watching")
     past_eps_by_ticker = {}
@@ -3304,6 +3318,66 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
     # Get past short EPs for delayed short detection
     past_short_eps_by_ticker = get_past_short_eps("watching")
 
+    # Known ETF/fund suffixes and tickers to exclude
+    _FUND_QUOTE_TYPES = {"ETF", "MUTUALFUND", "MONEYMARKET", "INDEX"}
+
+    # ── PASS 1: Classify EP types (fast, no network) ──────────────────
+    # Identify which tickers are EPs before scoring MAGNA, so we can
+    # fetch missing fundamentals only for tickers that actually need it.
+    ep_classified = {}      # ticker -> {"ep_result": ..., "short_result": ..., "fund": ...}
+    for ticker, df in bars_data.items():
+        if df is None or len(df) < 30:
+            continue
+        last_close = float(df["close"].iloc[-1])
+        if last_close < 2.0:
+            continue
+        fund = fund_data.get(ticker, {})
+        quote_type = fund.get("quoteType", "EQUITY")
+        if quote_type in _FUND_QUOTE_TYPES:
+            continue
+
+        past_eps = past_eps_by_ticker.get(ticker, [])
+        past_short_eps = past_short_eps_by_ticker.get(ticker, [])
+
+        ep_result = classify_ep_type(df, fund, past_eps, cfg)
+
+        # Gap direction gate
+        ep_gap = ep_result.get("ep_gap_pct", 0)
+        if ep_result["ep_type"] is not None and ep_gap < 0:
+            ep_result = {"ep_type": None}
+
+        # Mutual exclusion: long EP takes priority
+        if ep_result["ep_type"] is not None:
+            short_result = {"ep_type": None}
+        else:
+            short_result = classify_short_ep_type(df, fund, past_short_eps, cfg)
+
+        if ep_result["ep_type"] is not None or short_result["ep_type"] is not None:
+            ep_classified[ticker] = {
+                "ep_result": ep_result,
+                "short_result": short_result,
+                "fund": fund,
+            }
+
+    # ── Fetch missing fundamentals for EP-detected tickers ────────────
+    missing_fund_tickers = [
+        t for t in ep_classified
+        if not fund_data.get(t)  # empty dict or missing
+    ]
+    if missing_fund_tickers:
+        print(f"[ep-scan] Fetching fundamentals for {len(missing_fund_tickers)} "
+              f"EP tickers missing from initial fetch: {missing_fund_tickers[:10]}")
+        try:
+            extra_fund = fetch_fundamentals_batch(missing_fund_tickers, delay=0.15)
+            fund_data.update(extra_fund)
+            print(f"[ep-scan] Fetched fundamentals for {sum(1 for v in extra_fund.values() if v)} "
+                  f"of {len(missing_fund_tickers)} tickers")
+        except Exception as e:
+            print(f"[ep-scan] Extra fundamentals fetch failed: {e}")
+    else:
+        print(f"[ep-scan] All {len(ep_classified)} EP tickers already have fundamentals")
+
+    # ── PASS 2: Score MAGNA and build signals ─────────────────────────
     all_eps = []
     classic_eps = []
     delayed_eps = []
@@ -3317,30 +3391,11 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
     short_delayed_eps = []
     short_story_eps = []
 
-    # Known ETF/fund suffixes and tickers to exclude
-    _FUND_QUOTE_TYPES = {"ETF", "MUTUALFUND", "MONEYMARKET", "INDEX"}
-
-    for ticker, df in bars_data.items():
-        if df is None or len(df) < 30:
-            continue
-
-        # Skip penny stocks (< $2)
-        last_close = float(df["close"].iloc[-1])
-        if last_close < 2.0:
-            continue
-
-        # Skip ETFs, mutual funds, and index funds
-        fund = fund_data.get(ticker, {})
-        quote_type = fund.get("quoteType", "EQUITY")
-        if quote_type in _FUND_QUOTE_TYPES:
-            continue
-
-        past_eps = past_eps_by_ticker.get(ticker, [])
-        past_short_eps = past_short_eps_by_ticker.get(ticker, [])
-
-        # ── LONG EP scan ──────────────────────────────────────────────
-        # Classify EP type
-        ep_result = classify_ep_type(df, fund, past_eps, cfg)
+    for ticker, classified in ep_classified.items():
+        df = bars_data[ticker]
+        fund = fund_data.get(ticker, {})  # now enriched with extra fetch
+        ep_result = classified["ep_result"]
+        short_result = classified["short_result"]
 
         if ep_result["ep_type"] is not None:
             # Calculate MAGNA score
@@ -3439,9 +3494,7 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
             elif ep_result["ep_type"] == "MOM_BURST":
                 mom_bursts.append(signal)
 
-        # ── SHORT EP scan ─────────────────────────────────────────────
-        short_result = classify_short_ep_type(df, fund, past_short_eps, cfg)
-
+        # ── SHORT EP (already classified in Pass 1) ─────────────────
         if short_result["ep_type"] is not None:
             price = float(df["close"].iloc[-1])
 
@@ -3484,6 +3537,27 @@ def run_ep_scan(bars_data: dict, fundamentals: dict = None,
                 short_delayed_eps.append(short_signal)
             elif short_result["ep_type"] == "SHORT_STORY":
                 short_story_eps.append(short_signal)
+
+    # ── Deduplication: keep only one signal per ticker per side ──
+    # For duplicates, keep the one with the highest MAGNA/conviction score
+    def _dedup_by_ticker(signals: list, score_key: str = "magna_score") -> list:
+        seen = {}
+        for s in signals:
+            t = s["ticker"]
+            if t not in seen or (s.get(score_key, 0) or 0) > (seen[t].get(score_key, 0) or 0):
+                seen[t] = s
+        return list(seen.values())
+
+    all_eps = _dedup_by_ticker(all_eps, "magna_score")
+    classic_eps = _dedup_by_ticker(classic_eps, "magna_score")
+    delayed_eps = _dedup_by_ticker(delayed_eps, "magna_score")
+    nine_m_eps = _dedup_by_ticker(nine_m_eps, "magna_score")
+    story_eps = _dedup_by_ticker(story_eps, "magna_score")
+    mom_bursts = _dedup_by_ticker(mom_bursts, "magna_score")
+    all_short_eps = _dedup_by_ticker(all_short_eps, "short_magna_score")
+    short_classic_eps = _dedup_by_ticker(short_classic_eps, "short_magna_score")
+    short_delayed_eps = _dedup_by_ticker(short_delayed_eps, "short_magna_score")
+    short_story_eps = _dedup_by_ticker(short_story_eps, "short_magna_score")
 
     # Sort long EPs by conviction tier (best first), then MAGNA score
     sort_key = lambda x: (-x.get("conviction_tier", 0), -x.get("magna_score", 0))

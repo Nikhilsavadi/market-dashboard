@@ -2884,11 +2884,27 @@ function StockbeeEPDashboard({ onQuickAdd }) {
   const summary = data.summary || {};
   const breadth = data.sp500_breadth || {};
   const bearRegime = data.bear_regime || false;
-  const actionable = data.actionable_eps || [];
-  const overflow = data.actionable_overflow || [];
-  const shortEps = data.all_short_eps || [];
-  const watchlistEps = data.watchlist_eps || [];
-  const displayEps = data.display_eps || [...actionable, ...shortEps];
+  // Deduplicate: a ticker must never appear in both long and short sections
+  const dedup = (arr) => {
+    const seen = new Set();
+    return arr.filter(s => {
+      if (seen.has(s.ticker)) return false;
+      seen.add(s.ticker);
+      return true;
+    });
+  };
+  const actionable = dedup(data.actionable_eps || []);
+  const overflow = dedup(data.actionable_overflow || []);
+  // Exclude any short EP tickers that already appear in long actionable/overflow
+  const longTickers = new Set([...actionable, ...overflow].map(s => s.ticker));
+  const shortEps = dedup((data.all_short_eps || []).filter(s => !longTickers.has(s.ticker)));
+  const watchlistEps = dedup(data.watchlist_eps || []);
+  const displayEps = data.display_eps
+    ? dedup(data.display_eps.filter(s => {
+        const isShort = (s.ep_side === "SHORT" || (s.ep_type || "").startsWith("SHORT"));
+        return !(isShort && longTickers.has(s.ticker));
+      }))
+    : [...actionable, ...shortEps];
 
   return (
     <div>
